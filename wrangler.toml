@@ -1,10 +1,10 @@
 # The addon runs on one Worker under api.thesubtitledb.org/integrations/stremio/.
 #
-# A ROUTE, never a custom domain. That hostname is a proxied CNAME to the cloudflared
-# tunnel in front of the read API, and a custom domain takes the whole hostname: the
-# corpus API would go dark. A route runs in front of the origin for the matched prefix
-# only, which is why /v1 and /get are untouched by this deploy. The prefix is two
-# segments deep so /integrations stays free for whatever else goes under it.
+# A ROUTE, never a custom domain: a custom domain takes the whole hostname, and this
+# Worker must only ever answer under its own prefix. A route runs in front of the
+# origin for the matched prefix only, which is why /v1 and /get are untouched by this
+# deploy. The prefix is two segments deep so /integrations stays free for whatever
+# else goes under it.
 #
 # No KV and no D1: everything it serves is either derived from the API or held in the
 # Cache API, and a config lives in the install URL rather than in a store.
