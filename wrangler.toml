@@ -1,0 +1,41 @@
+# The addon runs on one Worker under api.thesubtitledb.org/integrations/stremio/.
+#
+# A ROUTE, never a custom domain. That hostname is a proxied CNAME to the cloudflared
+# tunnel in front of the read API, and a custom domain takes the whole hostname: the
+# corpus API would go dark. A route runs in front of the origin for the matched prefix
+# only, which is why /v1 and /get are untouched by this deploy. The prefix is two
+# segments deep so /integrations stays free for whatever else goes under it.
+#
+# No KV and no D1: everything it serves is either derived from the API or held in the
+# Cache API, and a config lives in the install URL rather than in a store.
+
+name = "subtitledb-stremio"
+main = "src/worker.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+# The logo the manifest points at. Assets are matched on the request path and served
+# before the Worker runs, so the directory mirrors the mount: the file has to sit at
+# public/integrations/stremio/logo.png to answer at /integrations/stremio/logo.png.
+assets = { directory = "./public" }
+
+[vars]
+API_BASE = "https://api.thesubtitledb.org"
+# Origin AND path. Every URL the addon hands Stremio is built from this, so it is the
+# one place the mount point is written down.
+ADDON_BASE = "https://api.thesubtitledb.org/integrations/stremio"
+
+# SDB_API_KEY is a secret, not a var: it moves the addon from the anonymous rate-limit
+# tier to the key tier. Set with `wrangler secret put SDB_API_KEY`. The addon works
+# without it, which is why nothing here declares it required.
+
+[[routes]]
+pattern = "api.thesubtitledb.org/integrations/stremio/*"
+zone_name = "thesubtitledb.org"
+
+# The wildcard does not match the bare mount point, only what is under it, so the URL a
+# person is most likely to type by hand would fall through to the API and 404. This
+# second pattern is the exact path, and it is what makes /configure reachable from it.
+[[routes]]
+pattern = "api.thesubtitledb.org/integrations/stremio"
+zone_name = "thesubtitledb.org"

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
+  // Matches subtitledb-cdn: the same formatter and the same lint preset, so a file
+  // moved between the two repos does not reformat.
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": false },
+  "files": {
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/coverage", "!.wrangler"]
+  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": { "noExplicitAny": "warn" }
+    }
+  },
+  "javascript": {
+    "formatter": { "quoteStyle": "single", "trailingCommas": "all", "semicolons": "always" }
+  },
+  "overrides": [
+    {
+      // Vendored verbatim from subtitledb-cdn and gated by tools/check-upstream.mjs.
+      // Formatting it here would make the copy diverge from the file it is checked
+      // against, which is the one thing the gate exists to prevent.
+      "includes": ["src/upstream/**"],
+      "formatter": { "enabled": false },
+      "linter": { "enabled": false }
+    },
+    {
+      // The shared match cases are laid out one case per line so a diff shows which
+      // rule changed, and they are a copy of the upstream file byte for byte.
+      "includes": ["test/fixtures/match-cases.json"],
+      "formatter": { "enabled": false }
+    }
+  ]
+}

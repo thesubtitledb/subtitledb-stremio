@@ -1,0 +1,29 @@
+{
+  "name": "subtitledb-stremio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stremio addon for TheSubtitleDB: subtitles by IMDb id, converted to WebVTT at the edge.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "lint": "biome ci --error-on-warnings .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "check:upstream": "node tools/check-upstream.mjs",
+    "logo": "python3 tools/make-logo.py public/logo.png",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.9",
+    "@cloudflare/workers-types": "^5.20260903.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.42.0"
+  }
+}

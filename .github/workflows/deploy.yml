@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - run: npm ci
+
+      # The gate again, in the deploy job. CI and deploy both run on a push to main and
+      # neither waits for the other, so a deploy that skipped this would race a red CI
+      # run to production.
+      - name: Lint
+        run: ./node_modules/.bin/biome ci --error-on-warnings .
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # A deploy that returns 0 and serves a broken manifest is the failure mode worth
+      # catching: Stremio accepts a broken addon into the catalogue and then never
+      # lists it.
+      - name: Probe what was deployed
+        run: |
+          set -eu
+          base=https://api.thesubtitledb.org/integrations/stremio
+          for path in /manifest.json /health /subtitles/movie/tt0133093.json; do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 "$base$path")
+            echo "$code $path"
+            test "$code" = 200
+          done
+          grep -q '"org.thesubtitledb.stremio"' /tmp/body || \
+            curl -s --max-time 30 "$base/manifest.json" | grep -q '"org.thesubtitledb.stremio"'
