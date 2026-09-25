@@ -1,7 +1,7 @@
 /**
- * Release-name similarity, vendored verbatim from subtitledb-cdn.
+ * Release-name similarity, vendored verbatim from subtitledb-integrations.
  *
- * Source: packages/core/src/match.ts in thesubtitledb/subtitledb-cdn.
+ * Source: packages/core/src/match.ts in thesubtitledb/subtitledb-integrations.
  *
  * This addon cannot import @subtitledb/core: it is a private workspace package,
  * UNLICENSED and not published. So the one function this repo shares with the four

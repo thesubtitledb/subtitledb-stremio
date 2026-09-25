@@ -21,7 +21,7 @@ jobs:
 
       - run: npm ci
 
-      # The same order as subtitledb-cdn: each step fails on the cheapest signal
+      # The same order as subtitledb-integrations: each step fails on the cheapest signal
       # available, so a formatting slip never costs a deploy dry run.
       - name: Lint
         run: ./node_modules/.bin/biome ci --error-on-warnings .
@@ -37,13 +37,10 @@ jobs:
         run: npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 
   # The vendored copies of the converter, the similarity function and the shared match
-  # cases, against subtitledb-cdn@main. A failure is not "update the copy": it is
-  # "somebody changed a rule, decide whether this addon changes with it".
-  # Skipped on a fork's pull request: GitHub withholds secrets from those, so
-  # UPSTREAM_TOKEN would be empty and check-upstream.mjs would exit 2 for a reason
-  # that has nothing to do with the change. Still runs on every push to main.
+  # cases, against subtitledb-integrations@main. A failure is not "update the copy": it is
+  # "somebody changed a rule, decide whether this addon changes with it". That repository
+  # is public, so this runs on a fork's pull request too.
   upstream:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -52,10 +49,10 @@ jobs:
         with:
           node-version: '24'
 
-      - name: No drift from subtitledb-cdn
+      - name: No drift from subtitledb-integrations
         run: node tools/check-upstream.mjs
         env:
-          UPSTREAM_TOKEN: ${{ secrets.UPSTREAM_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
   # Kept separate, but blocking. These call api.thesubtitledb.org directly, so a
   # failure here means the API changed or is down, not that this repo regressed, and

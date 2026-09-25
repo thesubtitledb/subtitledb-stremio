@@ -10,13 +10,12 @@
  *
  * So the pieces that are shared are copied verbatim, marked, and checked here. Every
  * `// --- BEGIN VERBATIM <path> ---` region in src/upstream must still be a contiguous
- * substring of that file in subtitledb-cdn@main, and the shared cases must match byte
- * for byte. A failure is not "update the copy": it is "somebody changed a rule, decide
- * whether this addon changes with it".
+ * substring of that file in subtitledb-integrations@main, and the shared cases must
+ * match byte for byte. A failure is not "update the copy": it is "somebody changed a
+ * rule, decide whether this addon changes with it".
  *
- * Needs a token that can read the private thesubtitledb/subtitledb-cdn: GITHUB_TOKEN
- * or UPSTREAM_TOKEN. It fails without one rather than skipping, because a gate that
- * silently does nothing is worse than no gate.
+ * That repository is public, so no token is needed. GITHUB_TOKEN is sent when set, for
+ * the higher rate limit a shared CI address needs.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -25,32 +24,20 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
-const REPO = 'thesubtitledb/subtitledb-cdn';
+const REPO = 'thesubtitledb/subtitledb-integrations';
 const REF = process.env.UPSTREAM_REF ?? 'main';
 
 const BEGIN = /^\/\/ --- BEGIN VERBATIM (.+?) ---$/m;
 const END = '// --- END VERBATIM ---';
 
-function token() {
-  const t = process.env.UPSTREAM_TOKEN ?? process.env.GITHUB_TOKEN;
-  if (!t) {
-    console.error(
-      'no token: set UPSTREAM_TOKEN or GITHUB_TOKEN to something that can read ' + REPO,
-    );
-    process.exit(2);
-  }
-  return t;
-}
-
-async function upstreamFile(path, auth) {
+async function upstreamFile(path) {
   const url = `https://api.github.com/repos/${REPO}/contents/${path}?ref=${encodeURIComponent(REF)}`;
-  const res = await fetch(url, {
-    headers: {
-      authorization: `Bearer ${auth}`,
-      accept: 'application/vnd.github.raw',
-      'user-agent': 'subtitledb-stremio-upstream-check',
-    },
-  });
+  const headers = {
+    accept: 'application/vnd.github.raw',
+    'user-agent': 'subtitledb-stremio-upstream-check',
+  };
+  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`${path}: GitHub answered ${res.status}`);
   return res.text();
 }
@@ -66,7 +53,6 @@ function vendoredRegion(source) {
 }
 
 async function main() {
-  const auth = token();
   const problems = [];
 
   const dir = join(ROOT, 'src', 'upstream');
@@ -78,7 +64,7 @@ async function main() {
       problems.push(`src/upstream/${name}: no BEGIN VERBATIM marker, so nothing is gated`);
       continue;
     }
-    const upstream = await upstreamFile(region.path, auth);
+    const upstream = await upstreamFile(region.path);
     if (upstream.includes(region.body)) {
       console.log(`ok   src/upstream/${name} <- ${region.path}`);
     } else {
@@ -91,7 +77,7 @@ async function main() {
 
   const casesPath = 'plugins/shared/match-cases.json';
   const mine = await readFile(join(ROOT, 'test', 'fixtures', 'match-cases.json'), 'utf8');
-  const theirs = await upstreamFile(casesPath, auth);
+  const theirs = await upstreamFile(casesPath);
   if (mine === theirs) {
     console.log(`ok   test/fixtures/match-cases.json <- ${casesPath}`);
   } else {

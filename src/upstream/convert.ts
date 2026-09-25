@@ -1,7 +1,7 @@
 /**
- * WebVTT conversion, vendored verbatim from subtitledb-cdn.
+ * WebVTT conversion, vendored verbatim from subtitledb-integrations.
  *
- * Source: packages/core/src/convert.ts in thesubtitledb/subtitledb-cdn.
+ * Source: packages/core/src/convert.ts in thesubtitledb/subtitledb-integrations.
  *
  * Stremio renders SubRip and WebVTT. The corpus is overwhelmingly srt with a long
  * tail of ass and ssa, and /get serves the stored bytes untouched, so handing Stremio

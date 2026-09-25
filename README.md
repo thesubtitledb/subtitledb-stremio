@@ -162,7 +162,7 @@ npm run logo            # regenerate public/logo.png
 ## Vendored code
 
 The converter and the release-name similarity function are copied verbatim from
-`thesubtitledb/subtitledb-cdn` into `src/upstream/`, because `@subtitledb/core` is
+`thesubtitledb/subtitledb-integrations` into `src/upstream/`, because `@subtitledb/core` is
 a private workspace package. `plugins/shared/match-cases.json` is copied into
 `test/fixtures/`.
 

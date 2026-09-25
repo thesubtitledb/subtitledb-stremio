@@ -2,7 +2,7 @@
  * The shared cases, read a sixth time.
  *
  * plugins/shared/match-cases.json is the file the TypeScript, Python, C# and Lua
- * suites in subtitledb-cdn all read, so that a rule changed in one language fails the
+ * suites in subtitledb-integrations all read, so that a rule changed in one language fails the
  * others' CI rather than quietly giving a Kodi user a different subtitle from a
  * browser user. This addon is in a different repository, which is a new way for the
  * same drift to happen, so it reads the same file: the copy in test/fixtures is

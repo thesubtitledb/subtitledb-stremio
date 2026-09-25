@@ -1,7 +1,7 @@
 /**
- * Language display names, vendored verbatim from subtitledb-cdn.
+ * Language display names, vendored verbatim from subtitledb-integrations.
  *
- * Source: packages/core/src/languages.ts in thesubtitledb/subtitledb-cdn.
+ * Source: packages/core/src/languages.ts in thesubtitledb/subtitledb-integrations.
  *
  * The names are shared with the web players and the four media-server ports, and
  * plugins/shared/match-cases.json is what keeps them in step. This copy exists
