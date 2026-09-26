@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
 import { route } from '../src/worker.js';
-import { ASS, bundle, ENV, row, SRT, stubFetch } from './fixtures.js';
+import { ASS, bundle, ENV, row, SRT, stubFetch, title } from './fixtures.js';
 
 const cfg = (patch: Partial<AddonConfig>) => encodeConfig({ ...DEFAULT_CONFIG, ...patch });
 
@@ -252,7 +252,33 @@ describe('the settings past languages', () => {
     );
     expect(out).toEqual([expect.objectContaining({ id: 'sdb-9', lang: 'eng' })]);
     expect(calls).toHaveLength(2);
-    expect(new URL(calls[1]?.url as string).searchParams.has('lang')).toBe(false);
+    // The fixture title's only language, taken from the empty answer's own counts.
+    expect(new URL(calls[1]?.url as string).searchParams.get('lang')).toBe('en');
+  });
+
+  it('falls back to the title’s most subtitled languages, not the API’s first', async () => {
+    // Unfiltered, the API answers in language order: Arabic before English on a film
+    // with twice as many English files.
+    const counts = { ar: 67, bg: 29, en: 147, es: 69, tr: 60 };
+    const empty = { ...bundle([]), title: title({ subtitle_languages: counts }) };
+    const { fetch, calls } = stubFetch([
+      { match: /lang=de/, body: empty },
+      ...['en', 'es', 'ar'].map((l, i) => ({
+        match: new RegExp(`lang=${l}\\b`),
+        body: bundle([row({ id: 20 + i, language: l })]),
+      })),
+    ]);
+    const out = await subs(
+      `/${cfg({ languages: ['de'], fallback: 'any' })}/subtitles/movie/tt0133093.json`,
+      fetch,
+    );
+    expect(calls.map((c) => new URL(c.url).searchParams.get('lang'))).toEqual([
+      'de',
+      'en',
+      'es',
+      'ar',
+    ]);
+    expect(out.map((s) => s.lang)).toEqual(['eng', 'spa', 'ara']);
   });
 
   it('offers nothing and asks once by default, the way it always did', async () => {

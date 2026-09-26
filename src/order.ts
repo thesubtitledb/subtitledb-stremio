@@ -14,7 +14,7 @@
  */
 
 import type { HearingImpaired, Styled } from './config.js';
-import type { BundleSubtitle } from './types.js';
+import type { BundleSubtitle, LookupBundle } from './types.js';
 import { similarity } from './upstream/similarity.js';
 
 /** Formats the vendored converter can turn into WebVTT. Anything else is not offered. */
@@ -119,6 +119,20 @@ export function dropExcluded(rows: BundleSubtitle[], hi: HearingImpaired): Bundl
 export function dropStyled(rows: BundleSubtitle[], styled: Styled): BundleSubtitle[] {
   if (styled !== 'exclude') return rows;
   return rows.filter((s) => !['ass', 'ssa'].includes((s.format ?? '').toLowerCase()));
+}
+
+/**
+ * A title's most subtitled languages, most first, for the any-language fallback.
+ *
+ * Asking the API for no language in particular is not the same thing: it answers in
+ * language order, so The Matrix offers 67 Arabic files before any of its 147 English
+ * ones. The counts come with every lookup, an empty one included.
+ */
+export function mostSubtitled(bundle: LookupBundle, n = 3): string[] {
+  return Object.entries(bundle.title?.subtitle_languages ?? {})
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, n)
+    .map(([code]) => code);
 }
 
 /**

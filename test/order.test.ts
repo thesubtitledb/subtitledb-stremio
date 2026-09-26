@@ -5,10 +5,11 @@ import {
   dropExcluded,
   dropStyled,
   filterLanguages,
+  mostSubtitled,
   order,
   wrongEpisode,
 } from '../src/order.js';
-import { row } from './fixtures.js';
+import { bundle, row, title } from './fixtures.js';
 
 const OPTS: OrderOptions = { languages: ['en'], hearingImpaired: 'include' };
 
@@ -103,6 +104,15 @@ describe('filters that are not ordering', () => {
     ];
     expect(dropStyled(rows, 'exclude').map((s) => s.id)).toEqual([1, 4]);
     expect(dropStyled(rows, 'include')).toHaveLength(4);
+  });
+
+  it('names a title’s most subtitled languages, most first', () => {
+    const counts = { ar: 67, bg: 29, en: 147, es: 69, tr: 69 };
+    const b = { ...bundle([]), title: title({ subtitle_languages: counts }) };
+    // A tie is broken by code, so the same title always falls back the same way.
+    expect(mostSubtitled(b)).toEqual(['en', 'es', 'tr']);
+    expect(mostSubtitled(b, 1)).toEqual(['en']);
+    expect(mostSubtitled({ ...b, title: title({ subtitle_languages: {} }) })).toEqual([]);
   });
 
   it('keeps the first n of each language, in the order it was given', () => {

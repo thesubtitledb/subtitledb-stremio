@@ -17,7 +17,14 @@ import { decodeConfig } from './config.js';
 import { error, html, json, preflight, withCors } from './http.js';
 import { toStremioLang } from './languages.js';
 import { configurePage, manifest } from './manifest.js';
-import { capPerLanguage, dropExcluded, dropStyled, filterLanguages, order } from './order.js';
+import {
+  capPerLanguage,
+  dropExcluded,
+  dropStyled,
+  filterLanguages,
+  mostSubtitled,
+  order,
+} from './order.js';
 import { parseAddonPath, parseContentId, parseExtra } from './stremio.js';
 import type { BundleSubtitle, Env, StremioSubtitle } from './types.js';
 import { ConvertError, toVtt } from './upstream/convert.js';
@@ -100,10 +107,10 @@ async function subtitles(
   const result = await lookupAll({ ...args, languages: config.languages }, api);
   if (!result) return empty();
 
-  const pick = (rows: BundleSubtitle[]) =>
+  const pick = (rows: BundleSubtitle[], languages = config.languages) =>
     capPerLanguage(
       order(dropStyled(dropExcluded(rows, config.hearingImpaired), config.styled), {
-        languages: config.languages,
+        languages,
         hearingImpaired: config.hearingImpaired,
         filename: extra.filename,
         season: id.season,
@@ -122,11 +129,12 @@ async function subtitles(
   );
 
   // Nothing in the chosen languages, and the viewer would rather have any language
-  // than none. An unfiltered bundle already holds every language, so only a filtered
-  // lookup costs a second request.
+  // than none: the title's most subtitled ones, most first. An unfiltered bundle
+  // already holds every language, so only a filtered lookup costs more requests.
   if (ranked.length === 0 && config.fallback === 'any' && config.languages.length > 0) {
-    const any = result.filtered ? await lookupAll({ ...args, languages: [] }, api) : result;
-    if (any) ranked = pick(bundleItems(any.bundle));
+    const common = mostSubtitled(result.bundle);
+    const any = result.filtered ? await lookupAll({ ...args, languages: common }, api) : result;
+    if (any) ranked = pick(bundleItems(any.bundle), common);
   }
 
   const base = addonBase(env, url);
