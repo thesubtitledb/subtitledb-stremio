@@ -159,6 +159,9 @@ npm run deploy          # deploy the Worker
 npm run logo            # regenerate public/logo.png
 ```
 
+Where each suite lives, what it proves and which CI job runs it:
+[docs/testing.md](docs/testing.md).
+
 ## Vendored code
 
 The converter and the release-name similarity function are copied verbatim from
