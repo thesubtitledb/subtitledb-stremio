@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { OrderOptions } from '../src/order.js';
-import { dropExcluded, filterLanguages, order, wrongEpisode } from '../src/order.js';
+import {
+  capPerLanguage,
+  dropExcluded,
+  dropStyled,
+  filterLanguages,
+  order,
+  wrongEpisode,
+} from '../src/order.js';
 import { row } from './fixtures.js';
 
 const OPTS: OrderOptions = { languages: ['en'], hearingImpaired: 'include' };
@@ -85,5 +92,30 @@ describe('filters that are not ordering', () => {
     const rows = [row({ id: 1, language: 'ar' }), row({ id: 2, language: 'en' })];
     expect(filterLanguages(rows, ['en']).map((s) => s.id)).toEqual([2]);
     expect(filterLanguages(rows, [])).toHaveLength(2);
+  });
+
+  it('leaves out styled subtitles, whatever case the format is in', () => {
+    const rows = [
+      row({ id: 1, format: 'srt' }),
+      row({ id: 2, format: 'ass' }),
+      row({ id: 3, format: 'SSA' }),
+      row({ id: 4, format: 'vtt' }),
+    ];
+    expect(dropStyled(rows, 'exclude').map((s) => s.id)).toEqual([1, 4]);
+    expect(dropStyled(rows, 'include')).toHaveLength(4);
+  });
+
+  it('keeps the first n of each language, in the order it was given', () => {
+    const rows = [
+      row({ id: 1, language: 'en' }),
+      row({ id: 2, language: 'fr' }),
+      row({ id: 3, language: 'en' }),
+      row({ id: 4, language: 'en' }),
+      row({ id: 5, language: 'fr' }),
+      row({ id: 6, language: 'fr' }),
+    ];
+    expect(capPerLanguage(rows, 2).map((s) => s.id)).toEqual([1, 2, 3, 5]);
+    expect(capPerLanguage(rows, 1).map((s) => s.id)).toEqual([1, 2]);
+    expect(capPerLanguage(rows, 0)).toHaveLength(6);
   });
 });

@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
 import { nameTable, spellingTable, toCode } from '../src/languages.js';
 import { configurePage } from '../src/manifest.js';
 
@@ -76,11 +76,7 @@ describe('picking languages', () => {
   it('draws the chosen languages server-side, in the order they were chosen', () => {
     // The page has to be right before its script runs: Stremio opens it in a webview,
     // and a list that appears only on paint reads as an empty list.
-    const html = configurePage(ORIGIN, {
-      languages: ['fr', 'de'],
-      hearingImpaired: 'include',
-      limit: 50,
-    });
+    const html = page({ ...DEFAULT_CONFIG, languages: ['fr', 'de'] });
     const french = html.indexOf('French');
     const german = html.indexOf('German');
     expect(french).toBeGreaterThan(-1);
@@ -94,22 +90,14 @@ describe('picking languages', () => {
   });
 
   it('gives every chosen language a way up, a way down, and a way out', () => {
-    const html = configurePage(ORIGIN, {
-      languages: ['en'],
-      hearingImpaired: 'include',
-      limit: 50,
-    });
+    const html = page();
     expect(html).toContain('aria-label="Move English up"');
     expect(html).toContain('aria-label="Move English down"');
     expect(html).toContain('aria-label="Remove English"');
   });
 
   it('draws a code with no name as a code, rather than pretending it has one', () => {
-    const html = configurePage(ORIGIN, {
-      languages: ['yi'],
-      hearingImpaired: 'include',
-      limit: 50,
-    });
+    const html = page({ ...DEFAULT_CONFIG, languages: ['yi'] });
     expect(html).toContain('class="cd raw"');
     expect(html).toContain('>yi<');
   });
@@ -149,17 +137,13 @@ describe('picking languages', () => {
 
 describe('the rest of the settings', () => {
   it('offers the three hearing-impaired states as one control, preselected', () => {
-    const html = configurePage(ORIGIN, {
-      languages: ['en'],
-      hearingImpaired: 'prefer',
-      limit: 50,
-    });
+    const html = page({ ...DEFAULT_CONFIG, hearingImpaired: 'prefer' });
     for (const value of ['include', 'prefer', 'exclude']) {
       expect(html).toContain(`type="radio" name="hi" value="${value}"`);
     }
     // Checked in the markup, so the page is right before its script runs.
-    expect(html).toContain('value="prefer" checked');
-    expect(html).not.toContain('value="include" checked');
+    expect(html).toContain('name="hi" value="prefer" checked');
+    expect(html).not.toContain('name="hi" value="include" checked');
   });
 
   it('explains what a hearing-impaired subtitle is, not just what the options are', () => {
@@ -175,15 +159,46 @@ describe('the rest of the settings', () => {
     expect(html).toContain('How many subtitles to weigh per title');
     expect(html).not.toContain('Subtitles to consider per title');
   });
+
+  it('draws the newer settings with what the install already has', () => {
+    const html = page({ ...DEFAULT_CONFIG, perLanguage: 3, styled: 'exclude', fallback: 'any' });
+    expect(html).toContain('name="per" value="3" checked');
+    expect(html).toContain('name="st" value="exclude" checked');
+    expect(html).toContain('name="fb" value="any" checked');
+    // One control per setting, and each one has exactly one answer.
+    for (const name of ['hi', 'per', 'st', 'fb']) {
+      expect(
+        html.match(new RegExp(`name="${name}" value="[^"]+" checked`, 'g')),
+        name,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('opens Advanced only when something in it was changed', () => {
+    // Closed by default, but a setting the install has is never hidden from the viewer.
+    expect(page()).toMatch(/<details class="adv">/);
+    for (const patch of [
+      { perLanguage: 1 },
+      { styled: 'exclude' as const },
+      { fallback: 'any' as const },
+      { limit: 20 },
+    ]) {
+      expect(page({ ...DEFAULT_CONFIG, ...patch }), JSON.stringify(patch)).toMatch(
+        /<details class="adv" open>/,
+      );
+    }
+  });
+
+  it('keeps the option labels out of the field-label rule', () => {
+    // A rule on every label inside Advanced made each option in its segmented
+    // controls bold, and pushed it off the grid with a margin.
+    expect(page()).not.toMatch(/\.advbody label\s*\{/);
+  });
 });
 
 describe('the install action', () => {
   it('carries the config it was opened with, in both links', () => {
-    const html = configurePage(ORIGIN, {
-      languages: ['fr', 'de'],
-      hearingImpaired: 'exclude',
-      limit: 20,
-    });
+    const html = page({ ...DEFAULT_CONFIG, languages: ['fr', 'de'], hearingImpaired: 'exclude' });
     // Asserting the literal segment would pin the encoder rather than the page, so
     // both links are checked against the same segment instead. The host carries a
     // path (the addon is mounted under /integrations/stremio), so the segment is the
@@ -194,6 +209,37 @@ describe('the install action', () => {
     expect(html).toContain(
       `https://api.thesubtitledb.org/integrations/stremio/${segment}/manifest.json`,
     );
+  });
+
+  it('writes the same URL the worker would, defaults left out and all', () => {
+    // The page encodes in the browser and the worker in TypeScript. If the two drift,
+    // a reinstall that changed nothing gets a new URL and Stremio adds a second copy.
+    const src = page().match(/function wire\(c\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+    expect(src).toBeDefined();
+    const wire = new Function(`${src}; return wire;`)() as (c: unknown) => string;
+    const configs: AddonConfig[] = [
+      DEFAULT_CONFIG,
+      { ...DEFAULT_CONFIG, languages: ['fr', 'de'], hearingImpaired: 'exclude', limit: 20 },
+      {
+        languages: [],
+        hearingImpaired: 'prefer',
+        limit: 100,
+        perLanguage: 5,
+        styled: 'exclude',
+        fallback: 'any',
+      },
+    ];
+    for (const c of configs) {
+      const theirs = wire({
+        l: c.languages,
+        h: c.hearingImpaired,
+        n: c.limit,
+        p: c.perLanguage,
+        s: c.styled,
+        f: c.fallback,
+      });
+      expect(theirs).toBe(atob(encodeConfig(c).replace(/-/g, '+').replace(/_/g, '/')));
+    }
   });
 
   it('follows the origin it was given, so a local run does not install production', () => {

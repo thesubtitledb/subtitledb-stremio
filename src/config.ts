@@ -16,27 +16,41 @@
 /** How a hearing-impaired subtitle is treated. */
 export type HearingImpaired = 'include' | 'exclude' | 'prefer';
 
+/** Whether SubStation Alpha rows are offered. They lose their styling on the way to WebVTT. */
+export type Styled = 'include' | 'exclude';
+
+/** What to offer when nothing is left in the chosen languages. */
+export type Fallback = 'none' | 'any';
+
+/** How many of each language the menu can show. 0 is every one. */
+export const PER_LANGUAGE = [0, 1, 2, 3, 5] as const;
+
 export interface AddonConfig {
   /** Corpus codes, best first. Empty means no language filter at all. */
   languages: string[];
   hearingImpaired: HearingImpaired;
   /** Rows requested from the API, before ordering. The API caps at 100. */
   limit: number;
+  /** Rows kept per language after ordering, from PER_LANGUAGE. */
+  perLanguage: number;
+  styled: Styled;
+  fallback: Fallback;
 }
 
 export const DEFAULT_CONFIG: AddonConfig = {
   languages: ['en'],
   hearingImpaired: 'include',
   limit: 50,
+  perLanguage: 0,
+  styled: 'include',
+  fallback: 'none',
 };
 
 /** Longer than any honest config; a longer segment is not decoded at all. */
 const MAX_CONFIG_CHARS = 2048;
 
-const HI_VALUES: readonly HearingImpaired[] = ['include', 'exclude', 'prefer'];
-
-function isHearingImpaired(v: unknown): v is HearingImpaired {
-  return typeof v === 'string' && (HI_VALUES as readonly string[]).includes(v);
+function oneOf<T>(v: unknown, values: readonly T[], fallback: T): T {
+  return values.includes(v as T) ? (v as T) : fallback;
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
@@ -54,12 +68,18 @@ function base64UrlDecode(s: string): Uint8Array {
 }
 
 export function encodeConfig(config: AddonConfig): string {
-  const json = JSON.stringify({
+  const wire: Record<string, unknown> = {
     l: config.languages,
     h: config.hearingImpaired,
     n: config.limit,
-  });
-  return base64UrlEncode(new TextEncoder().encode(json));
+  };
+  // Left out at their defaults, so an install that never touches them keeps the URL it
+  // had before they existed. Stremio keys an install on its URL: a new one is a second
+  // copy of the addon, not an update to the first.
+  if (config.perLanguage !== DEFAULT_CONFIG.perLanguage) wire.p = config.perLanguage;
+  if (config.styled !== DEFAULT_CONFIG.styled) wire.s = config.styled;
+  if (config.fallback !== DEFAULT_CONFIG.fallback) wire.f = config.fallback;
+  return base64UrlEncode(new TextEncoder().encode(JSON.stringify(wire)));
 }
 
 /**
@@ -87,9 +107,16 @@ export function decodeConfig(segment: string | null | undefined): AddonConfig {
 
   return {
     languages,
-    hearingImpaired: isHearingImpaired(raw.h) ? raw.h : DEFAULT_CONFIG.hearingImpaired,
+    hearingImpaired: oneOf<HearingImpaired>(
+      raw.h,
+      ['include', 'exclude', 'prefer'],
+      DEFAULT_CONFIG.hearingImpaired,
+    ),
     // The API caps limit at 100 and silently clamps; clamping here keeps the number in
     // the URL and the number in the request the same thing.
     limit: Math.min(100, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : DEFAULT_CONFIG.limit)),
+    perLanguage: oneOf<number>(raw.p, PER_LANGUAGE, DEFAULT_CONFIG.perLanguage),
+    styled: oneOf<Styled>(raw.s, ['include', 'exclude'], DEFAULT_CONFIG.styled),
+    fallback: oneOf<Fallback>(raw.f, ['none', 'any'], DEFAULT_CONFIG.fallback),
   };
 }

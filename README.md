@@ -22,3 +22,6 @@ addon's **Configure** button in Stremio opens the same page later.
 | Languages | English | Up to 16, best first. None means every language. |
 | Hearing impaired | Include | Include, prefer or exclude. |
 | Subtitles per title | 50 | 1 to 100, shared across the languages. |
+| Subtitles per language | All | All, 1, 2, 3 or 5. |
+| Styled subtitles | Include | Include or leave out .ass and .ssa. |
+| If none in your languages | Nothing | Nothing, or any language. |

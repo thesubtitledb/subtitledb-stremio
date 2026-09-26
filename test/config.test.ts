@@ -1,10 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG, decodeConfig, encodeConfig } from '../src/config.js';
+import { type AddonConfig, DEFAULT_CONFIG, decodeConfig, encodeConfig } from '../src/config.js';
+
+const b64url = (json: unknown) =>
+  btoa(JSON.stringify(json)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 describe('config in the URL', () => {
   it('round trips', () => {
-    const config = { languages: ['fr', 'en'], hearingImpaired: 'exclude' as const, limit: 20 };
+    const config: AddonConfig = {
+      languages: ['fr', 'en'],
+      hearingImpaired: 'exclude',
+      limit: 20,
+      perLanguage: 3,
+      styled: 'exclude',
+      fallback: 'any',
+    };
     expect(decodeConfig(encodeConfig(config))).toEqual(config);
+  });
+
+  it('keeps the URL an install already has while the newer settings are left alone', () => {
+    // Stremio keys an install on its URL. If the same settings encoded differently
+    // after an update, reinstalling from the configure page would add a second copy.
+    const before = b64url({ l: ['de'], h: 'prefer', n: 30 });
+    const config = {
+      ...DEFAULT_CONFIG,
+      languages: ['de'],
+      hearingImpaired: 'prefer' as const,
+      limit: 30,
+    };
+    expect(encodeConfig(config)).toBe(before);
+    expect(decodeConfig(before)).toEqual(config);
+  });
+
+  it('refuses a newer setting it does not recognise, one field at a time', () => {
+    const decoded = decodeConfig(b64url({ l: ['de'], p: 4, s: 'no', f: 'all' }));
+    expect(decoded.languages).toEqual(['de']);
+    expect(decoded.perLanguage).toBe(DEFAULT_CONFIG.perLanguage);
+    expect(decoded.styled).toBe(DEFAULT_CONFIG.styled);
+    expect(decoded.fallback).toBe(DEFAULT_CONFIG.fallback);
+    // A number in a string is not the number: the page never writes one.
+    expect(decodeConfig(b64url({ p: '3' })).perLanguage).toBe(DEFAULT_CONFIG.perLanguage);
   });
 
   it('encodes to something a URL path can carry', () => {
@@ -28,15 +62,8 @@ describe('config in the URL', () => {
   });
 
   it('keeps the fields it understands from a config written by another version', () => {
-    const segment = btoa(JSON.stringify({ l: ['de'], h: 'nonsense', n: 'lots' }))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    expect(decodeConfig(segment)).toEqual({
-      languages: ['de'],
-      hearingImpaired: DEFAULT_CONFIG.hearingImpaired,
-      limit: DEFAULT_CONFIG.limit,
-    });
+    const segment = b64url({ l: ['de'], h: 'nonsense', n: 'lots' });
+    expect(decodeConfig(segment)).toEqual({ ...DEFAULT_CONFIG, languages: ['de'] });
   });
 
   it('drops anything that is not a two-letter code, and caps the list at 16', () => {

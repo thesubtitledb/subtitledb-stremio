@@ -13,7 +13,7 @@
  * quietly stop working on them.
  */
 
-import type { HearingImpaired } from './config.js';
+import type { HearingImpaired, Styled } from './config.js';
 import type { BundleSubtitle } from './types.js';
 import { similarity } from './upstream/similarity.js';
 
@@ -108,4 +108,30 @@ export function filterLanguages(rows: BundleSubtitle[], languages: string[]): Bu
  */
 export function dropExcluded(rows: BundleSubtitle[], hi: HearingImpaired): BundleSubtitle[] {
   return hi === 'exclude' ? rows.filter((s) => !s.hearing_impaired) : rows;
+}
+
+/**
+ * Rows a viewer who left out styled subtitles should not be offered.
+ *
+ * SubStation Alpha reaches Stremio as plain WebVTT, so its positioned signs and
+ * karaoke arrive as ordinary lines. Some viewers would rather not have them at all.
+ */
+export function dropStyled(rows: BundleSubtitle[], styled: Styled): BundleSubtitle[] {
+  if (styled !== 'exclude') return rows;
+  return rows.filter((s) => !['ass', 'ssa'].includes((s.format ?? '').toLowerCase()));
+}
+
+/**
+ * The first n rows of each language, in the order given. 0 keeps every row.
+ *
+ * Runs on ordered rows, or the n kept would be the first n the API happened to send.
+ */
+export function capPerLanguage(rows: BundleSubtitle[], n: number): BundleSubtitle[] {
+  if (n <= 0) return rows;
+  const seen = new Map<string, number>();
+  return rows.filter((s) => {
+    const k = (seen.get(s.language) ?? 0) + 1;
+    seen.set(s.language, k);
+    return k <= n;
+  });
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { encodeConfig } from '../src/config.js';
+import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
 import { route } from '../src/worker.js';
 import { ASS, bundle, ENV, row, SRT, stubFetch } from './fixtures.js';
+
+const cfg = (patch: Partial<AddonConfig>) => encodeConfig({ ...DEFAULT_CONFIG, ...patch });
 
 function get(path: string, fetchImpl?: typeof fetch) {
   return route(new Request(`https://stremio.example.test${path}`), ENV, { fetch: fetchImpl });
@@ -72,6 +74,15 @@ describe('the protocol surface', () => {
     expect(m.resources).toEqual(['subtitles']);
     expect(m.types).toEqual(['movie', 'series']);
     expect(m.idPrefixes).toEqual(['tt']);
+    // Every setting the configure page offers, for the clients that draw their own.
+    expect((m.config as { key: string }[]).map((c) => c.key)).toEqual([
+      'languages',
+      'hearingImpaired',
+      'limit',
+      'perLanguage',
+      'styled',
+      'fallback',
+    ]);
   });
 
   it('serves the manifest with CORS, which is where addons usually get this wrong', async () => {
@@ -82,8 +93,8 @@ describe('the protocol surface', () => {
   });
 
   it('serves the same manifest under a config segment', async () => {
-    const cfg = encodeConfig({ languages: ['de'], hearingImpaired: 'exclude', limit: 10 });
-    const res = await get(`/${cfg}/manifest.json`);
+    const segment = cfg({ languages: ['de'], hearingImpaired: 'exclude', limit: 10 });
+    const res = await get(`/${segment}/manifest.json`);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { id: string }).id).toBe('org.thesubtitledb.stremio');
   });
@@ -102,13 +113,14 @@ describe('the protocol surface', () => {
     expect(bare.headers.get('content-type')).toContain('text/html');
     expect(await bare.text()).toContain('Install in Stremio');
 
-    const cfg = encodeConfig({ languages: ['fr'], hearingImpaired: 'prefer', limit: 7 });
-    const body = await (await get(`/${cfg}/configure`)).text();
+    const segment = cfg({ languages: ['fr'], hearingImpaired: 'prefer', limit: 7, perLanguage: 2 });
+    const body = await (await get(`/${segment}/configure`)).text();
     // The page opens with the settings the install already has, not the defaults,
-    // and all three are drawn server-side so they are right before the script runs.
+    // and all of them are drawn server-side so they are right before the script runs.
     expect(body).toContain('data-code="fr"');
-    expect(body).toContain('value="prefer" checked');
+    expect(body).toContain('name="hi" value="prefer" checked');
     expect(body).toContain('value="7"');
+    expect(body).toContain('name="per" value="2" checked');
   });
 
   it('sends the root at the configure page', async () => {
@@ -151,9 +163,9 @@ describe('subtitles', () => {
     // its own order, so the second language came back empty and ranking had nothing
     // to rank. test/fanout.test.ts owns the detail; this pins that the route spends
     // the requests rather than the client library doing it somewhere else.
-    const cfg = encodeConfig({ languages: ['fr', 'en'], hearingImpaired: 'include', limit: 25 });
+    const segment = cfg({ languages: ['fr', 'en'], limit: 25 });
     const { fetch, calls } = stubFetch([LOOKUP]);
-    await get(`/${cfg}/subtitles/movie/tt0133093.json`, fetch);
+    await get(`/${segment}/subtitles/movie/tt0133093.json`, fetch);
 
     expect(calls).toHaveLength(2);
     expect(calls.map((c) => new URL(c.url).searchParams.get('lang'))).toEqual(['fr', 'en']);
@@ -195,6 +207,71 @@ describe('subtitles', () => {
     const miss = await get('/subtitles/movie/kitsu:1.json', fetch);
     expect(hit.headers.get('cache-control')).toContain('max-age=1800');
     expect(miss.headers.get('cache-control')).toContain('max-age=300');
+  });
+});
+
+describe('the settings past languages', () => {
+  const subs = async (path: string, fetchImpl: typeof fetch) =>
+    ((await (await get(path, fetchImpl)).json()) as { subtitles: { id: string; lang: string }[] })
+      .subtitles;
+
+  it('shows the best n of each language and no more', async () => {
+    const rows = [
+      row({ id: 1, language: 'en', cues: 100 }),
+      row({ id: 2, language: 'en', cues: 300 }),
+      row({ id: 3, language: 'en', cues: 200 }),
+      row({ id: 4, language: 'fr', cues: 100 }),
+      row({ id: 5, language: 'fr', cues: 200 }),
+    ];
+    const { fetch } = stubFetch([{ match: /by-imdb/, body: bundle(rows) }]);
+    const out = await subs(
+      `/${cfg({ languages: [], perLanguage: 1 })}/subtitles/movie/tt0133093.json`,
+      fetch,
+    );
+    // The best, not the first: the cap runs after the ordering.
+    expect(out.map((s) => s.id)).toEqual(['sdb-2', 'sdb-5']);
+  });
+
+  it('leaves styled subtitles out when asked to', async () => {
+    const rows = [row({ id: 1, format: 'srt' }), row({ id: 2, format: 'ass' })];
+    const { fetch } = stubFetch([{ match: /by-imdb/, body: bundle(rows) }]);
+    const out = await subs(`/${cfg({ styled: 'exclude' })}/subtitles/movie/tt0133093.json`, fetch);
+    expect(out.map((s) => s.id)).toEqual(['sdb-1']);
+  });
+
+  const GERMAN_EMPTY = [
+    { match: /lang=de/, body: bundle([]) },
+    { match: /by-imdb/, body: bundle([row({ id: 9, language: 'en' })]) },
+  ];
+
+  it('offers any language when nothing is in the chosen ones, if the viewer said to', async () => {
+    const { fetch, calls } = stubFetch(GERMAN_EMPTY);
+    const out = await subs(
+      `/${cfg({ languages: ['de'], fallback: 'any' })}/subtitles/movie/tt0133093.json`,
+      fetch,
+    );
+    expect(out).toEqual([expect.objectContaining({ id: 'sdb-9', lang: 'eng' })]);
+    expect(calls).toHaveLength(2);
+    expect(new URL(calls[1]?.url as string).searchParams.has('lang')).toBe(false);
+  });
+
+  it('offers nothing and asks once by default, the way it always did', async () => {
+    const { fetch, calls } = stubFetch(GERMAN_EMPTY);
+    const out = await subs(`/${cfg({ languages: ['de'] })}/subtitles/movie/tt0133093.json`, fetch);
+    expect(out).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not ask again when the bundle it has already holds every language', async () => {
+    // A whole series comes back unfiltered, so the fallback is already in hand.
+    const series = bundle([row({ id: 1, language: 'ar' })], [{}]);
+    const { fetch, calls } = stubFetch([{ match: /by-imdb/, body: series }]);
+    const out = await subs(
+      `/${cfg({ languages: ['en'], fallback: 'any' })}/subtitles/series/tt0944947.json`,
+      fetch,
+    );
+    expect(out.map((s) => s.id)).toEqual(['sdb-1']);
+    expect(calls).toHaveLength(1);
   });
 });
 

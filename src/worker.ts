@@ -17,9 +17,9 @@ import { decodeConfig } from './config.js';
 import { error, html, json, preflight, withCors } from './http.js';
 import { toStremioLang } from './languages.js';
 import { configurePage, manifest } from './manifest.js';
-import { dropExcluded, filterLanguages, order } from './order.js';
+import { capPerLanguage, dropExcluded, dropStyled, filterLanguages, order } from './order.js';
 import { parseAddonPath, parseContentId, parseExtra } from './stremio.js';
-import type { Env, StremioSubtitle } from './types.js';
+import type { BundleSubtitle, Env, StremioSubtitle } from './types.js';
 import { ConvertError, toVtt } from './upstream/convert.js';
 
 /** How long each kind of answer stays fresh. */
@@ -94,33 +94,40 @@ async function subtitles(
   if (!id) return empty();
 
   const extra = parseExtra(extraSegment, url.searchParams);
+  const args = { imdb: id.imdb, season: id.season, episode: id.episode, limit: config.limit };
+  const api = { base: env.API_BASE, key: env.SDB_API_KEY, fetch: deps.fetch };
 
-  const result = await lookupAll(
-    {
-      imdb: id.imdb,
-      season: id.season,
-      episode: id.episode,
-      languages: config.languages,
-      limit: config.limit,
-    },
-    { base: env.API_BASE, key: env.SDB_API_KEY, fetch: deps.fetch },
-  );
+  const result = await lookupAll({ ...args, languages: config.languages }, api);
   if (!result) return empty();
+
+  const pick = (rows: BundleSubtitle[]) =>
+    capPerLanguage(
+      order(dropStyled(dropExcluded(rows, config.hearingImpaired), config.styled), {
+        languages: config.languages,
+        hearingImpaired: config.hearingImpaired,
+        filename: extra.filename,
+        season: id.season,
+        episode: id.episode,
+      }),
+      config.perLanguage,
+    );
 
   // The API ignores lang on a whole series or season bundle, so filtering locally is
   // only correct where it actually ran. Filtering on a filter that never ran turns a
   // full list into an empty one.
-  const rows = result.filtered
-    ? bundleItems(result.bundle)
-    : filterLanguages(bundleItems(result.bundle), config.languages);
+  let ranked = pick(
+    result.filtered
+      ? bundleItems(result.bundle)
+      : filterLanguages(bundleItems(result.bundle), config.languages),
+  );
 
-  const ranked = order(dropExcluded(rows, config.hearingImpaired), {
-    languages: config.languages,
-    hearingImpaired: config.hearingImpaired,
-    filename: extra.filename,
-    season: id.season,
-    episode: id.episode,
-  });
+  // Nothing in the chosen languages, and the viewer would rather have any language
+  // than none. An unfiltered bundle already holds every language, so only a filtered
+  // lookup costs a second request.
+  if (ranked.length === 0 && config.fallback === 'any' && config.languages.length > 0) {
+    const any = result.filtered ? await lookupAll({ ...args, languages: [] }, api) : result;
+    if (any) ranked = pick(bundleItems(any.bundle));
+  }
 
   const base = addonBase(env, url);
   const out: StremioSubtitle[] = ranked.map((s) => ({

@@ -6,11 +6,11 @@
  * viewer the two links that install it.
  */
 
-import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from './config.js';
+import { type AddonConfig, DEFAULT_CONFIG, encodeConfig, PER_LANGUAGE } from './config.js';
 import { nameTable, spellingTable } from './languages.js';
 
 export const ADDON_ID = 'org.thesubtitledb.stremio';
-export const ADDON_VERSION = '0.1.0';
+export const ADDON_VERSION = '0.2.0';
 
 export interface Manifest {
   id: string;
@@ -40,7 +40,7 @@ interface ManifestConfigField {
  * The manifest is the same at every install; the settings ride in the URL, not in it.
  *
  * `config` is declared for the clients that render it natively, and `configurable`
- * points the rest at /configure. Both describe the same three settings.
+ * points the rest at /configure. Both describe the same settings.
  */
 export function manifest(origin: string): Manifest {
   return {
@@ -75,6 +75,27 @@ export function manifest(origin: string): Manifest {
         title: 'Subtitles to consider per title (1-100)',
         default: String(DEFAULT_CONFIG.limit),
       },
+      {
+        key: 'perLanguage',
+        type: 'select',
+        title: 'Subtitles per language (0 is all)',
+        options: PER_LANGUAGE.map(String),
+        default: String(DEFAULT_CONFIG.perLanguage),
+      },
+      {
+        key: 'styled',
+        type: 'select',
+        title: 'Styled subtitles (.ass, .ssa)',
+        options: ['include', 'exclude'],
+        default: DEFAULT_CONFIG.styled,
+      },
+      {
+        key: 'fallback',
+        type: 'select',
+        title: 'If none in your languages',
+        options: ['none', 'any'],
+        default: DEFAULT_CONFIG.fallback,
+      },
     ],
   };
 }
@@ -104,6 +125,40 @@ const HI_OPTIONS: Array<[AddonConfig['hearingImpaired'], string]> = [
   ['prefer', 'Prefer'],
   ['exclude', 'Leave out'],
 ];
+
+const PER_OPTIONS: Array<[number, string]> = PER_LANGUAGE.map((n) => [
+  n,
+  n === 0 ? 'All' : String(n),
+]);
+
+const STYLED_OPTIONS: Array<[AddonConfig['styled'], string]> = [
+  ['include', 'Include'],
+  ['exclude', 'Leave out'],
+];
+
+const FALLBACK_OPTIONS: Array<[AddonConfig['fallback'], string]> = [
+  ['none', 'Nothing'],
+  ['any', 'Any language'],
+];
+
+/**
+ * One segmented control's radios, checked in the markup rather than by the script:
+ * the page has to be right in a webview before its script runs, and a segmented
+ * control with nothing selected reads as a setting nobody has made.
+ */
+function radios<T extends string | number>(
+  name: string,
+  options: Array<[T, string]>,
+  current: T,
+): string {
+  return options
+    .map(
+      ([value, text]) =>
+        `<label><input type="radio" name="${name}" value="${value}"` +
+        `${current === value ? ' checked' : ''}><span>${text}</span></label>`,
+    )
+    .join('');
+}
 
 const icon = (name: keyof typeof ICONS, cls = 'i'): string =>
   `<svg class="${cls}" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" ` +
@@ -150,14 +205,13 @@ export function configurePage(origin: string, config: AddonConfig): string {
   const names = nameTable();
   const count = Object.keys(names).length;
   const rows = config.languages.map((c, i) => chosenRow(c, names, i)).join('');
-  // Checked in the markup rather than by the script: the page has to be right in a
-  // webview before its script runs, and a segmented control with nothing selected
-  // reads as a setting nobody has made.
-  const hiRadios = HI_OPTIONS.map(
-    ([value, text]) =>
-      `<label><input type="radio" name="hi" value="${value}"` +
-      `${config.hearingImpaired === value ? ' checked' : ''}><span>${text}</span></label>`,
-  ).join('');
+  // Open when something in it was changed, so a setting the install has is never
+  // one the viewer cannot see.
+  const changed =
+    config.limit !== DEFAULT_CONFIG.limit ||
+    config.perLanguage !== DEFAULT_CONFIG.perLanguage ||
+    config.styled !== DEFAULT_CONFIG.styled ||
+    config.fallback !== DEFAULT_CONFIG.fallback;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -324,9 +378,13 @@ export function configurePage(origin: string, config: AddonConfig): string {
            transform: rotate(-45deg); margin-left: auto; transition: transform .18s var(--ease); }
   details.adv[open] .caret { transform: rotate(45deg); }
   .advbody { padding: 0 1.25rem 1.25rem; }
-  .advbody label { display: block; font-size: var(--t-sm); font-weight: 600; margin-bottom: .25rem; }
-  .advbody .hint { font-weight: 400; color: var(--ink-3); font-size: var(--t-sm);
-                   display: block; margin-bottom: .5rem; }
+  .field + .field { margin-top: 1.25rem; }
+  /* A class, not a label selector: the segmented controls are built from labels too,
+     and a rule on every label in here made each option bold. */
+  .fl { display: block; font-size: var(--t-sm); font-weight: 600; margin-bottom: .5rem; }
+  .fl .hint { display: block; font-weight: 400; color: var(--ink-3); }
+  .seg.n2 { grid-template-columns: repeat(2, 1fr); }
+  .seg.n5 { grid-template-columns: repeat(5, 1fr); font-variant-numeric: tabular-nums; }
   #limit { width: 6rem; font-variant-numeric: tabular-nums; }
 
   /* The manual path: the install for every client that will not take a stremio:// link.
@@ -423,16 +481,31 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     <p class="sub">Subtitles that also describe sound: music, a door, a name off screen. Prefer puts them first.</p>
     <fieldset class="seg" id="hi">
       <legend class="sr">Hearing impaired subtitles</legend>
-      ${hiRadios}
+      ${radios('hi', HI_OPTIONS, config.hearingImpaired)}
     </fieldset>
   </section>
 
-  <details class="adv">
+  <details class="adv"${changed ? ' open' : ''}>
     <summary>Advanced<span class="caret" aria-hidden="true"></span></summary>
     <div class="advbody">
-      <label for="limit">How many subtitles to weigh per title
-        <span class="hint">1 to 100. Raising it widens the list the ranking picks from.</span></label>
-      <input id="limit" type="number" min="1" max="100" value="${config.limit}">
+      <div class="field">
+        <span class="fl" id="perl">Subtitles per language</span>
+        <fieldset class="seg n5" aria-labelledby="perl">${radios('per', PER_OPTIONS, config.perLanguage)}</fieldset>
+      </div>
+      <div class="field">
+        <span class="fl" id="stl">Styled subtitles
+          <span class="hint">.ass and .ssa, shown as plain text.</span></span>
+        <fieldset class="seg n2" aria-labelledby="stl">${radios('st', STYLED_OPTIONS, config.styled)}</fieldset>
+      </div>
+      <div class="field">
+        <span class="fl" id="fbl">If none in your languages</span>
+        <fieldset class="seg n2" aria-labelledby="fbl">${radios('fb', FALLBACK_OPTIONS, config.fallback)}</fieldset>
+      </div>
+      <div class="field">
+        <label class="fl" for="limit">How many subtitles to weigh per title
+          <span class="hint">1 to 100. Raising it widens the list the ranking picks from.</span></label>
+        <input id="limit" type="number" min="1" max="100" value="${config.limit}">
+      </div>
     </div>
   </details>
 
@@ -662,12 +735,34 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     fade();
   }
 
+  /* The same keys, in the same order, with the same defaults left out, as
+     src/config.ts encodeConfig. A reinstall that changed nothing has to be the same
+     URL, or Stremio counts it as a second copy of the addon. */
+  function wire(c) {
+    var o = { l: c.l, h: c.h, n: c.n };
+    if (c.p !== ${DEFAULT_CONFIG.perLanguage}) o.p = c.p;
+    if (c.s !== ${JSON.stringify(DEFAULT_CONFIG.styled)}) o.s = c.s;
+    if (c.f !== ${JSON.stringify(DEFAULT_CONFIG.fallback)}) o.f = c.f;
+    return JSON.stringify(o);
+  }
+
+  function picked(name, dflt) {
+    var r = document.querySelector('input[name="' + name + '"]:checked');
+    return r ? r.value : dflt;
+  }
+
   function drawUrl() {
     var n = parseInt(el('limit').value, 10);
     if (!isFinite(n)) n = ${DEFAULT_CONFIG.limit};
     n = Math.min(100, Math.max(1, n));
-    var hi = document.querySelector('input[name="hi"]:checked');
-    var json = JSON.stringify({ l: chosen, h: hi ? hi.value : 'include', n: n });
+    var json = wire({
+      l: chosen,
+      h: picked('hi', ${JSON.stringify(DEFAULT_CONFIG.hearingImpaired)}),
+      n: n,
+      p: parseInt(picked('per', '${DEFAULT_CONFIG.perLanguage}'), 10),
+      s: picked('st', ${JSON.stringify(DEFAULT_CONFIG.styled)}),
+      f: picked('fb', ${JSON.stringify(DEFAULT_CONFIG.fallback)})
+    });
     var cfg = btoa(String.fromCharCode.apply(null, new TextEncoder().encode(json)))
       .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
     el('install').href = 'stremio://' + HOST + '/' + cfg + '/manifest.json';
@@ -734,7 +829,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     if (code && add(code)) { el('search').value = ''; drawBrowse(); }
   });
 
-  document.querySelectorAll('input[name="hi"]').forEach(function (r) {
+  document.querySelectorAll('.seg input').forEach(function (r) {
     r.addEventListener('change', drawUrl);
   });
   // Written back, not just clamped: 500 in the box with 100 in the URL is a settings

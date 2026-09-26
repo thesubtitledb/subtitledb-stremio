@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { lookupAll } from '../src/api.js';
-import { encodeConfig } from '../src/config.js';
+import { DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
 import { route } from '../src/worker.js';
 import { bundle, ENV, row, stubFetch } from './fixtures.js';
 
@@ -96,11 +96,7 @@ describe('what the viewer ends up seeing', () => {
     // The whole point. Before this, a two-language install was a one-language install
     // that looked like a two-language install.
     const stub = stubFetch(byLang({ fr: 2, en: 2 }));
-    const config = encodeConfig({
-      languages: ['fr', 'en'],
-      hearingImpaired: 'include',
-      limit: 50,
-    });
+    const config = encodeConfig({ ...DEFAULT_CONFIG, languages: ['fr', 'en'] });
     const res = await route(
       new Request(`https://stremio.example.test/${config}/subtitles/movie/tt0133093.json`),
       ENV,

@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { encodeConfig } from '../src/config.js';
+import { DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
 import type { Env } from '../src/types.js';
 import { route } from '../src/worker.js';
 
@@ -74,7 +74,7 @@ describe('subtitles from the live corpus', () => {
   });
 
   it('honours a configured language', async () => {
-    const cfg = encodeConfig({ languages: ['fr'], hearingImpaired: 'include', limit: 20 });
+    const cfg = encodeConfig({ ...DEFAULT_CONFIG, languages: ['fr'], limit: 20 });
     const body = await subtitles(`/${cfg}/subtitles/movie/${MOVIE}.json`);
     expect(body.subtitles.length).toBeGreaterThan(0);
     expect(new Set(body.subtitles.map((s) => s.lang))).toEqual(new Set(['fre']));
@@ -83,7 +83,7 @@ describe('subtitles from the live corpus', () => {
   it('filters a whole-series bundle itself, because the API does not', async () => {
     // lang is ignored on a series bundle by design: the tree is served unfiltered.
     // The addon filters locally there, and this is what proves it still needs to.
-    const cfg = encodeConfig({ languages: ['en'], hearingImpaired: 'include', limit: 100 });
+    const cfg = encodeConfig({ ...DEFAULT_CONFIG, languages: ['en'], limit: 100 });
     const body = await subtitles(`/${cfg}/subtitles/series/${SERIES}.json`);
     for (const s of body.subtitles) expect(s.lang).toBe('eng');
   });
