@@ -266,26 +266,3 @@ export async function fetchSubtitle(id: number, opts: ApiOptions): Promise<Fetch
     return { text, format: sniffFormat(text, res.headers.get('content-type')) };
   }
 }
-
-/**
- * Tells the API a subtitle was served from this addon's cache.
- *
- * `/get` records the download and answers with a redirect, which is not followed: the
- * bytes are already in hand. A failure is logged and goes no further, because the
- * viewer already has the subtitle.
- */
-export async function countDownload(id: number, opts: ApiOptions): Promise<void> {
-  const doFetch = opts.fetch ?? fetch;
-  const url = downloadUrl(id, opts.base);
-  try {
-    const res = await doFetch(url.toString(), {
-      headers: auth(url, opts),
-      redirect: 'manual',
-      signal: signal(opts),
-    });
-    await res.body?.cancel();
-    if (res.status >= 400) console.warn(`download count for subtitle ${id}: ${res.status}`);
-  } catch (err) {
-    console.warn(`download count for subtitle ${id}: ${reason(err)}`);
-  }
-}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
-import worker, { countHit, route } from '../src/worker.js';
+import { route } from '../src/worker.js';
 import { ASS, bundle, ENV, row, SRT, stubFetch, title } from './fixtures.js';
 
 const cfg = (patch: Partial<AddonConfig>) => encodeConfig({ ...DEFAULT_CONFIG, ...patch });
@@ -22,7 +22,6 @@ function quietWarnings() {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
 
 const LOOKUP = { match: /by-imdb/, body: bundle([row({ id: 1 }), row({ id: 2, language: 'fr' })]) };
@@ -476,72 +475,6 @@ describe('subtitle bytes', () => {
 
   it('refuses a path that is not a subtitle id', async () => {
     expect((await get('/s/abc.vtt')).status).toBe(404);
-  });
-});
-
-/**
- * Bytes are cached for a year, so without this the API's download log would count
- * the first viewer of each subtitle and nobody after.
- */
-describe('a subtitle served from the cache', () => {
-  const KEYED = { ...ENV, SDB_API_KEY: 'sdb_test' };
-  const hit = (path: string, init?: RequestInit) =>
-    new Request(`https://stremio.example.test${path}`, init);
-  const REDIRECT = {
-    match: /\/get\/7(\?|$)/,
-    status: 302,
-    headers: { location: 'https://files.example.test/s/7' },
-  };
-
-  it('is counted with the API, without fetching the bytes again', async () => {
-    const { fetch, calls } = stubFetch([REDIRECT]);
-    await countHit(hit('/s/7.vtt'), KEYED, { fetch });
-    expect(calls).toHaveLength(1);
-    const url = new URL(calls[0]?.url as string);
-    expect(url.pathname).toBe('/get/7');
-    expect(url.searchParams.get('client')).toBe('stremio');
-    expect(calls[0]?.init?.redirect).toBe('manual');
-    expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer sdb_test');
-  });
-
-  it('is not counted without a key, which would spend the anonymous allowance', () => {
-    const { fetch, calls } = stubFetch([REDIRECT]);
-    expect(countHit(hit('/s/7.vtt'), ENV, { fetch })).toBeNull();
-    expect(calls).toHaveLength(0);
-  });
-
-  it('counts subtitle bytes only, and a GET only', () => {
-    const { fetch, calls } = stubFetch([REDIRECT]);
-    expect(countHit(hit('/subtitles/movie/tt0133093.json'), KEYED, { fetch })).toBeNull();
-    expect(countHit(hit('/manifest.json'), KEYED, { fetch })).toBeNull();
-    expect(countHit(hit('/s/7.vtt', { method: 'HEAD' }), KEYED, { fetch })).toBeNull();
-    expect(calls).toHaveLength(0);
-  });
-
-  it('logs a count the API refused, and does not throw', async () => {
-    const warn = quietWarnings();
-    const { fetch } = stubFetch([{ match: /\/get\/7(\?|$)/, status: 429, body: {} }]);
-    await expect(countHit(hit('/s/7.vtt'), KEYED, { fetch })).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('429'));
-  });
-
-  it('is counted by the Worker after it answers from the cache', async () => {
-    const { fetch, calls } = stubFetch([REDIRECT]);
-    vi.stubGlobal('fetch', fetch);
-    vi.stubGlobal('caches', {
-      default: { match: async () => new Response('WEBVTT\n'), put: async () => undefined },
-    });
-    const pending: Promise<unknown>[] = [];
-    const ctx = {
-      waitUntil: (p: Promise<unknown>) => pending.push(p),
-      passThroughOnException: () => undefined,
-    } as unknown as ExecutionContext;
-
-    const res = await worker.fetch(hit('/s/7.vtt'), KEYED, ctx);
-    expect(await res.text()).toBe('WEBVTT\n');
-    expect(pending).toHaveLength(1);
-    await Promise.all(pending);
-    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(['/get/7']);
   });
 });
 

@@ -12,7 +12,7 @@
  * than behind the API's rate limiter.
  */
 
-import { bundleItems, countDownload, fetchSubtitle, type LookupResult, lookupAll } from './api.js';
+import { bundleItems, fetchSubtitle, type LookupResult, lookupAll } from './api.js';
 import { decodeConfig } from './config.js';
 import { error, html, json, preflight, withCors } from './http.js';
 import { toStremioLang } from './languages.js';
@@ -230,24 +230,6 @@ function bytesId(path: string): string | null {
   return /^\/s\/(\d+)\.vtt$/.exec(path)?.[1] ?? null;
 }
 
-/**
- * Tells the API about a subtitle served from this Worker's cache.
- *
- * Converted bytes are cached for a year, so after the first viewer of a subtitle the
- * API's `/get` would never hear of it again, and its download log would count cache
- * fills rather than plays. Only with a key: without one the addon shares the
- * anonymous allowance, and a count must not spend what the next viewer's subtitle
- * needs.
- */
-export function countHit(req: Request, env: Env, deps: Deps = {}): Promise<void> | null {
-  if (req.method !== 'GET' || !env.SDB_API_KEY) return null;
-  const url = new URL(req.url);
-  const path = unprefix(addonBase(env, url), url.pathname);
-  const id = path === null ? null : bytesId(path);
-  if (id === null) return null;
-  return countDownload(Number(id), { base: env.API_BASE, key: env.SDB_API_KEY, fetch: deps.fetch });
-}
-
 /** Exported for the tests, which drive it with a plain Request and no Workers runtime. */
 export async function route(req: Request, env: Env, deps: Deps = {}): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
@@ -296,11 +278,7 @@ export default {
     // request per viewer rather than one per half hour.
     const cache = edgeCache();
     const hit = await cache?.match(req);
-    if (hit) {
-      const count = countHit(req, env);
-      if (count) ctx.waitUntil(count);
-      return hit;
-    }
+    if (hit) return hit;
 
     const res = await route(req, env);
     if (cache && res.status === 200 && (req.method === 'GET' || req.method === 'HEAD')) {
