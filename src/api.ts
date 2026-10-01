@@ -1,5 +1,5 @@
 /**
- * The SubtitleDB half: one lookup, and one byte fetch.
+ * The SubtitleDB half: one lookup, one byte fetch, and a download count.
  *
  * Deliberately small. The API's `/v1/by-imdb/:imdb` answers with the whole title in
  * one request, and drilling to `/season/:s/episode/:e` narrows it to the episode
@@ -23,6 +23,19 @@ export interface ApiOptions {
   /** Moves the addon off the anonymous rate-limit tier. Optional by design. */
   key?: string | undefined;
   fetch?: typeof fetch | undefined;
+  /** How long one request may take. TIMEOUT_MS unless a test needs it shorter. */
+  timeoutMs?: number | undefined;
+}
+
+/** Long enough for the API on a slow day, short enough that Stremio still gets an answer. */
+export const TIMEOUT_MS = 5000;
+
+function signal(opts: ApiOptions): AbortSignal {
+  return AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS);
+}
+
+function reason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export class ApiError extends Error {
@@ -63,11 +76,14 @@ export interface LookupResult {
    * locally on the strength of a filter that never ran shows the viewer nothing.
    */
   filtered: boolean;
+  /** True when some language's request failed, so the answer is short of what was asked. */
+  partial?: boolean;
 }
 
 /**
  * One lookup. A 404 is "we do not have this title", not an error, and comes back as
- * null so the caller answers Stremio with an empty list.
+ * null so the caller answers Stremio with an empty list. Anything else that is not an
+ * answer, a timeout included, throws.
  */
 export async function lookup(args: LookupArgs, opts: ApiOptions): Promise<LookupResult | null> {
   const url = new URL(lookupPath(args), opts.base);
@@ -77,7 +93,7 @@ export async function lookup(args: LookupArgs, opts: ApiOptions): Promise<Lookup
   url.searchParams.set('client', 'stremio');
 
   const doFetch = opts.fetch ?? fetch;
-  const res = await doFetch(url.toString(), { headers: headers(opts) });
+  const res = await doFetch(url.toString(), { headers: headers(opts), signal: signal(opts) });
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `lookup failed: ${res.status}`);
 
@@ -100,6 +116,9 @@ export async function lookup(args: LookupArgs, opts: ApiOptions): Promise<Lookup
  * total the viewer asked for. The first one goes alone because its answer is what
  * tells us whether `lang` applied at all: on a whole series or season bundle the API
  * ignores it, and the rest would be n identical requests for one unfiltered tree.
+ *
+ * A failed first request fails the lookup. A failure after it costs only that
+ * language: the rest are kept and the result is marked partial.
  */
 export async function lookupAll(args: LookupArgs, opts: ApiOptions): Promise<LookupResult | null> {
   const langs = args.languages;
@@ -109,9 +128,19 @@ export async function lookupAll(args: LookupArgs, opts: ApiOptions): Promise<Loo
   const first = await lookup({ ...args, languages: [langs[0] as string], limit: share }, opts);
   if (!first?.filtered) return first;
 
-  const rest = await Promise.all(
+  const settled = await Promise.allSettled(
     langs.slice(1).map((lang) => lookup({ ...args, languages: [lang], limit: share }, opts)),
   );
+  const rest: (LookupResult | null)[] = [];
+  let partial = false;
+  for (const [i, s] of settled.entries()) {
+    if (s.status === 'fulfilled') {
+      rest.push(s.value);
+    } else {
+      partial = true;
+      console.warn(`lookup for ${langs[i + 1]} failed: ${reason(s.reason)}`);
+    }
+  }
 
   // A title can carry the same file under two languages' pages; the id is the identity.
   const seen = new Set<number>();
@@ -127,6 +156,7 @@ export async function lookupAll(args: LookupArgs, opts: ApiOptions): Promise<Loo
   return {
     bundle: { ...first.bundle, subtitles: { ...first.bundle.subtitles, items } },
     filtered: true,
+    partial,
   };
 }
 
@@ -169,20 +199,93 @@ export function sniffFormat(text: string, contentType: string | null): string {
   return 'srt';
 }
 
+/** Redirects one download may take. The API takes one, to its files host. */
+const MAX_HOPS = 3;
+
+/**
+ * Whether a URL is one of the API's own: its host, or the domain it sits on and that
+ * domain's subdomains, where `/get` sends the bytes. On the API's own scheme only.
+ */
+export function ours(url: URL, base: string): boolean {
+  const api = new URL(base);
+  if (url.protocol !== api.protocol) return false;
+  const root = api.hostname.split('.').slice(-2).join('.');
+  return (
+    url.hostname === api.hostname || url.hostname === root || url.hostname.endsWith(`.${root}`)
+  );
+}
+
+/** `/get/:id`, named as this addon's download in the API's download log. */
+function downloadUrl(id: number, base: string): URL {
+  const url = new URL(`/get/${id}`, base);
+  url.searchParams.set('client', 'stremio');
+  return url;
+}
+
+/** The key, sent to the API's own host and never to where it redirects. */
+function auth(url: URL, opts: ApiOptions): Record<string, string> {
+  return opts.key && url.host === new URL(opts.base).host
+    ? { authorization: `Bearer ${opts.key}` }
+    : {};
+}
+
 /**
  * Subtitle bytes for one id.
  *
- * `/get/:id` on the API host 302s to the files host; fetch follows it, which is the
- * point of using the published URL rather than rebuilding one. The API serves UTF-8,
- * so decoding is not negotiable here and `SubEncoding: UTF-8` upstream is honest.
+ * `/get/:id` on the API host 302s to the files host. Each hop is followed by hand, so
+ * a redirect off the API's hosts is refused and the key stays on the API host. The API
+ * serves UTF-8, so decoding is not negotiable here and `SubEncoding: UTF-8` upstream is
+ * honest. A web page or an empty body is not a subtitle and is refused, rather than
+ * converted into a track that shows nothing.
  */
 export async function fetchSubtitle(id: number, opts: ApiOptions): Promise<FetchedSubtitle> {
   const doFetch = opts.fetch ?? fetch;
-  const res = await doFetch(new URL(`/get/${id}`, opts.base).toString(), {
-    headers: opts.key ? { authorization: `Bearer ${opts.key}` } : {},
-    redirect: 'follow',
-  });
-  if (!res.ok) throw new ApiError(res.status, `subtitle ${id}: ${res.status}`);
-  const text = await res.text();
-  return { text, format: sniffFormat(text, res.headers.get('content-type')) };
+  let url = downloadUrl(id, opts.base);
+  for (let hop = 0; ; hop++) {
+    const res = await doFetch(url.toString(), {
+      headers: auth(url, opts),
+      redirect: 'manual',
+      signal: signal(opts),
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    if (location !== null) {
+      const next = new URL(location, url);
+      if (hop >= MAX_HOPS || !ours(next, opts.base)) {
+        throw new ApiError(502, `subtitle ${id}: redirected to ${next.host}`);
+      }
+      await res.body?.cancel();
+      url = next;
+      continue;
+    }
+    if (!res.ok) throw new ApiError(res.status, `subtitle ${id}: ${res.status}`);
+    const text = await res.text();
+    const head = text.trimStart().slice(0, 14).toLowerCase();
+    if (!head || head.startsWith('<!doctype html') || head.startsWith('<html')) {
+      throw new ApiError(502, `subtitle ${id}: ${head ? 'a web page' : 'empty'}, not a subtitle`);
+    }
+    return { text, format: sniffFormat(text, res.headers.get('content-type')) };
+  }
+}
+
+/**
+ * Tells the API a subtitle was served from this addon's cache.
+ *
+ * `/get` records the download and answers with a redirect, which is not followed: the
+ * bytes are already in hand. A failure is logged and goes no further, because the
+ * viewer already has the subtitle.
+ */
+export async function countDownload(id: number, opts: ApiOptions): Promise<void> {
+  const doFetch = opts.fetch ?? fetch;
+  const url = downloadUrl(id, opts.base);
+  try {
+    const res = await doFetch(url.toString(), {
+      headers: auth(url, opts),
+      redirect: 'manual',
+      signal: signal(opts),
+    });
+    await res.body?.cancel();
+    if (res.status >= 400) console.warn(`download count for subtitle ${id}: ${res.status}`);
+  } catch (err) {
+    console.warn(`download count for subtitle ${id}: ${reason(err)}`);
+  }
 }

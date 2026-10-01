@@ -10,7 +10,7 @@ import { type AddonConfig, DEFAULT_CONFIG, encodeConfig, PER_LANGUAGE } from './
 import { nameTable, spellingTable } from './languages.js';
 
 export const ADDON_ID = 'org.thesubtitledb.stremio';
-export const ADDON_VERSION = '0.2.0';
+export const ADDON_VERSION = '0.2.1';
 
 export interface Manifest {
   id: string;

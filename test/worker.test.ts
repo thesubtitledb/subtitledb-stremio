@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AddonConfig, DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
-import { route } from '../src/worker.js';
+import worker, { countHit, route } from '../src/worker.js';
 import { ASS, bundle, ENV, row, SRT, stubFetch, title } from './fixtures.js';
 
 const cfg = (patch: Partial<AddonConfig>) => encodeConfig({ ...DEFAULT_CONFIG, ...patch });
@@ -8,6 +8,22 @@ const cfg = (patch: Partial<AddonConfig>) => encodeConfig({ ...DEFAULT_CONFIG, .
 function get(path: string, fetchImpl?: typeof fetch) {
   return route(new Request(`https://stremio.example.test${path}`), ENV, { fetch: fetchImpl });
 }
+
+/** A fetch that never answers, until the caller gives up on it. */
+const hang = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+  new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+  })) as unknown as typeof fetch;
+
+/** Failures are logged on purpose. Kept quiet here, and asserted where it matters. */
+function quietWarnings() {
+  return vi.spyOn(console, 'warn').mockImplementation(() => {});
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const LOOKUP = { match: /by-imdb/, body: bundle([row({ id: 1 }), row({ id: 2, language: 'fr' })]) };
 
@@ -184,6 +200,65 @@ describe('subtitles', () => {
     );
   });
 
+  it('answers an API that fails or limits it with an empty list, for a minute', async () => {
+    // These used to reach Stremio as a 500, which shows the addon as broken on every
+    // title until the API recovers.
+    const warn = quietWarnings();
+    for (const status of [429, 500, 503]) {
+      const { fetch } = stubFetch([{ match: /by-imdb/, status, body: {} }]);
+      const res = await get('/subtitles/movie/tt0133093.json', fetch);
+      expect(res.status, String(status)).toBe(200);
+      const body = (await res.json()) as { subtitles: unknown[]; cacheMaxAge: number };
+      expect(body.subtitles).toEqual([]);
+      expect(body.cacheMaxAge).toBe(60);
+      expect(res.headers.get('cache-control')).toContain('max-age=60');
+    }
+    // Logged, so an outage is not mistaken for a run of titles with nothing.
+    expect(warn).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up on a lookup that does not answer in time', async () => {
+    quietWarnings();
+    const res = await route(
+      new Request('https://stremio.example.test/subtitles/movie/tt0133093.json'),
+      ENV,
+      { fetch: hang, timeoutMs: 20 },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { subtitles: unknown[] }).subtitles).toEqual([]);
+    expect(res.headers.get('cache-control')).toContain('max-age=60');
+  });
+
+  it('keeps the languages that answered when one fails, and asks again soon', async () => {
+    const warn = quietWarnings();
+    const { fetch } = stubFetch([
+      { match: /lang=fr(&|$)/, body: bundle([row({ id: 5, language: 'fr' })]) },
+      { match: /lang=en(&|$)/, status: 503, body: {} },
+    ]);
+    const res = await get(
+      `/${cfg({ languages: ['fr', 'en'] })}/subtitles/movie/tt0133093.json`,
+      fetch,
+    );
+    const body = (await res.json()) as { subtitles: { id: string }[] };
+    expect(body.subtitles.map((s) => s.id)).toEqual(['sdb-5']);
+    expect(res.headers.get('cache-control')).toContain('max-age=60');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('lookup for en failed'));
+  });
+
+  it('does not fall back to other languages on a partial answer', async () => {
+    // The language that failed may have had subtitles, so "nothing in your languages"
+    // is not known, and the fallback would put a stranger's language first.
+    quietWarnings();
+    const { fetch, calls } = stubFetch([
+      { match: /lang=fr(&|$)/, body: bundle([]) },
+      { match: /lang=en(&|$)/, status: 500, body: {} },
+    ]);
+    const segment = cfg({ languages: ['fr', 'en'], fallback: 'any' });
+    const res = await get(`/${segment}/subtitles/movie/tt0133093.json`, fetch);
+    expect(((await res.json()) as { subtitles: unknown[] }).subtitles).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
   it('answers an id from another addon space with an empty list and no request', async () => {
     const { fetch, calls } = stubFetch([LOOKUP]);
     const res = await get('/subtitles/movie/kitsu:1234.json', fetch);
@@ -303,7 +378,7 @@ describe('the settings past languages', () => {
 
 describe('subtitle bytes', () => {
   it('converts SubRip to WebVTT and serves it as such', async () => {
-    const { fetch } = stubFetch([{ match: /\/get\/1$/, text: SRT }]);
+    const { fetch } = stubFetch([{ match: /\/get\/1(\?|$)/, text: SRT }]);
     const res = await get('/s/1.vtt', fetch);
     const body = await res.text();
 
@@ -316,7 +391,7 @@ describe('subtitle bytes', () => {
 
   it('converts SubStation Alpha, which is the whole reason this route exists', async () => {
     const { fetch } = stubFetch([
-      { match: /\/get\/9$/, text: ASS, headers: { 'content-type': 'text/x-ssa' } },
+      { match: /\/get\/9(\?|$)/, text: ASS, headers: { 'content-type': 'text/x-ssa' } },
     ]);
     const body = await (await get('/s/9.vtt', fetch)).text();
     expect(body.startsWith('WEBVTT')).toBe(true);
@@ -325,8 +400,61 @@ describe('subtitle bytes', () => {
     expect(body).not.toContain('an8');
   });
 
-  it('serves bytes as immutable, so a cache hit costs no request upstream', async () => {
-    const { fetch } = stubFetch([{ match: /\/get\/1$/, text: SRT }]);
+  it('names the download as this addon', async () => {
+    const { fetch, calls } = stubFetch([{ match: /\/get\/1(\?|$)/, text: SRT }]);
+    await get('/s/1.vtt', fetch);
+    expect(new URL(calls[0]?.url as string).searchParams.get('client')).toBe('stremio');
+  });
+
+  it('follows the API to its files host, and keeps the key on the API', async () => {
+    const files = 'https://files.example.test/s/1';
+    const { fetch, calls } = stubFetch([
+      { match: /\/get\/1(\?|$)/, status: 302, headers: { location: files } },
+      { match: /files\.example\.test/, text: SRT },
+    ]);
+    const res = await route(
+      new Request('https://stremio.example.test/s/1.vtt'),
+      { ...ENV, SDB_API_KEY: 'sdb_test' },
+      { fetch },
+    );
+    expect(res.status).toBe(200);
+    expect(calls.map((c) => new URL(c.url).host)).toEqual([
+      'api.example.test',
+      'files.example.test',
+    ]);
+    expect(calls.map((c) => new Headers(c.init?.headers).get('authorization'))).toEqual([
+      'Bearer sdb_test',
+      null,
+    ]);
+    for (const c of calls) expect(c.init?.redirect).toBe('manual');
+  });
+
+  it('refuses a redirect off the API hosts without following it', async () => {
+    quietWarnings();
+    for (const location of [
+      'https://elsewhere.test/s/1',
+      'https://example.test.elsewhere.test/s/1',
+      'http://files.example.test/s/1',
+    ]) {
+      const { fetch, calls } = stubFetch([
+        { match: /\/get\/1(\?|$)/, status: 302, headers: { location } },
+        { match: /./, text: SRT },
+      ]);
+      expect((await get('/s/1.vtt', fetch)).status, location).toBe(502);
+      expect(calls, location).toHaveLength(1);
+    }
+  });
+
+  it('refuses a web page or an empty file rather than converting it', async () => {
+    quietWarnings();
+    for (const text of ['<!DOCTYPE html><html><body>Sign in</body></html>', '﻿ <html>', '', ' \n']) {
+      const { fetch } = stubFetch([{ match: /\/get\/1(\?|$)/, text }]);
+      expect((await get('/s/1.vtt', fetch)).status, JSON.stringify(text)).toBe(502);
+    }
+  });
+
+  it('serves bytes as immutable, so a cache hit never fetches them again', async () => {
+    const { fetch } = stubFetch([{ match: /\/get\/1(\?|$)/, text: SRT }]);
     const res = await get('/s/1.vtt', fetch);
     expect(res.headers.get('cache-control')).toContain('immutable');
   });
@@ -334,18 +462,86 @@ describe('subtitle bytes', () => {
   it('says a row did not parse rather than serving an empty track', async () => {
     // An empty WEBVTT file is a working subtitle as far as Stremio is concerned: the
     // track appears, the viewer selects it, and nothing ever shows.
-    const { fetch } = stubFetch([{ match: /\/get\/1$/, text: 'not a subtitle at all' }]);
+    const { fetch } = stubFetch([{ match: /\/get\/1(\?|$)/, text: 'not a subtitle at all' }]);
     const res = await get('/s/1.vtt', fetch);
     expect(res.status).toBe(422);
   });
 
   it('reports an upstream failure as one', async () => {
-    const { fetch } = stubFetch([{ match: /\/get\/1$/, status: 500, body: {} }]);
+    const warn = quietWarnings();
+    const { fetch } = stubFetch([{ match: /\/get\/1(\?|$)/, status: 500, body: {} }]);
     expect((await get('/s/1.vtt', fetch)).status).toBe(502);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('500'));
   });
 
   it('refuses a path that is not a subtitle id', async () => {
     expect((await get('/s/abc.vtt')).status).toBe(404);
+  });
+});
+
+/**
+ * Bytes are cached for a year, so without this the API's download log would count
+ * the first viewer of each subtitle and nobody after.
+ */
+describe('a subtitle served from the cache', () => {
+  const KEYED = { ...ENV, SDB_API_KEY: 'sdb_test' };
+  const hit = (path: string, init?: RequestInit) =>
+    new Request(`https://stremio.example.test${path}`, init);
+  const REDIRECT = {
+    match: /\/get\/7(\?|$)/,
+    status: 302,
+    headers: { location: 'https://files.example.test/s/7' },
+  };
+
+  it('is counted with the API, without fetching the bytes again', async () => {
+    const { fetch, calls } = stubFetch([REDIRECT]);
+    await countHit(hit('/s/7.vtt'), KEYED, { fetch });
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]?.url as string);
+    expect(url.pathname).toBe('/get/7');
+    expect(url.searchParams.get('client')).toBe('stremio');
+    expect(calls[0]?.init?.redirect).toBe('manual');
+    expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer sdb_test');
+  });
+
+  it('is not counted without a key, which would spend the anonymous allowance', () => {
+    const { fetch, calls } = stubFetch([REDIRECT]);
+    expect(countHit(hit('/s/7.vtt'), ENV, { fetch })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('counts subtitle bytes only, and a GET only', () => {
+    const { fetch, calls } = stubFetch([REDIRECT]);
+    expect(countHit(hit('/subtitles/movie/tt0133093.json'), KEYED, { fetch })).toBeNull();
+    expect(countHit(hit('/manifest.json'), KEYED, { fetch })).toBeNull();
+    expect(countHit(hit('/s/7.vtt', { method: 'HEAD' }), KEYED, { fetch })).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('logs a count the API refused, and does not throw', async () => {
+    const warn = quietWarnings();
+    const { fetch } = stubFetch([{ match: /\/get\/7(\?|$)/, status: 429, body: {} }]);
+    await expect(countHit(hit('/s/7.vtt'), KEYED, { fetch })).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('429'));
+  });
+
+  it('is counted by the Worker after it answers from the cache', async () => {
+    const { fetch, calls } = stubFetch([REDIRECT]);
+    vi.stubGlobal('fetch', fetch);
+    vi.stubGlobal('caches', {
+      default: { match: async () => new Response('WEBVTT\n'), put: async () => undefined },
+    });
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => pending.push(p),
+      passThroughOnException: () => undefined,
+    } as unknown as ExecutionContext;
+
+    const res = await worker.fetch(hit('/s/7.vtt'), KEYED, ctx);
+    expect(await res.text()).toBe('WEBVTT\n');
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(['/get/7']);
   });
 });
 

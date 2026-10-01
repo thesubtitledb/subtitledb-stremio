@@ -12,7 +12,7 @@
  * than behind the API's rate limiter.
  */
 
-import { bundleItems, fetchSubtitle, lookupAll } from './api.js';
+import { bundleItems, countDownload, fetchSubtitle, type LookupResult, lookupAll } from './api.js';
 import { decodeConfig } from './config.js';
 import { error, html, json, preflight, withCors } from './http.js';
 import { toStremioLang } from './languages.js';
@@ -37,6 +37,8 @@ const CACHE = {
   lookup: 1800,
   /** A miss is cheap to re-check and might be a title we ingested since. */
   empty: 300,
+  /** The API failed or answered in part, so ask again soon. */
+  failed: 60,
   /** Converted bytes for one subtitle id cannot change. */
   bytes: 31536000,
 } as const;
@@ -72,11 +74,17 @@ function unprefix(base: string, pathname: string): string | null {
  * directives; without them the titles we hold nothing for are the ones asked about
  * most often.
  */
-function empty(): Response {
-  return json(
-    { subtitles: [], cacheMaxAge: CACHE.empty, staleRevalidate: CACHE.empty, staleError: 86400 },
-    CACHE.empty,
-  );
+function empty(age: number = CACHE.empty): Response {
+  return json({ subtitles: [], cacheMaxAge: age, staleRevalidate: age, staleError: 86400 }, age);
+}
+
+/**
+ * The answer when the API failed, timed out or is limiting this addon: an empty list
+ * for a minute. Logged, so an outage does not pass for a run of titles with nothing.
+ */
+function unavailable(err: unknown): Response {
+  console.warn(`lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  return empty(CACHE.failed);
 }
 
 /**
@@ -84,8 +92,8 @@ function empty(): Response {
  *
  * Answers with an empty list rather than an error for every "we do not have this":
  * an unknown id, an id from another addon's space, a title with nothing in the
- * viewer's languages. Stremio shows an addon that errors as broken, and none of these
- * are broken.
+ * viewer's languages, and an API that cannot answer right now. Stremio shows an addon
+ * that errors as broken, and none of these are broken.
  */
 async function subtitles(
   env: Env,
@@ -102,10 +110,21 @@ async function subtitles(
 
   const extra = parseExtra(extraSegment, url.searchParams);
   const args = { imdb: id.imdb, season: id.season, episode: id.episode, limit: config.limit };
-  const api = { base: env.API_BASE, key: env.SDB_API_KEY, fetch: deps.fetch };
+  const api = {
+    base: env.API_BASE,
+    key: env.SDB_API_KEY,
+    fetch: deps.fetch,
+    timeoutMs: deps.timeoutMs,
+  };
 
-  const result = await lookupAll({ ...args, languages: config.languages }, api);
+  let result: LookupResult | null;
+  try {
+    result = await lookupAll({ ...args, languages: config.languages }, api);
+  } catch (err) {
+    return unavailable(err);
+  }
   if (!result) return empty();
+  let partial = result.partial === true;
 
   const pick = (rows: BundleSubtitle[], languages = config.languages) =>
     capPerLanguage(
@@ -130,11 +149,23 @@ async function subtitles(
 
   // Nothing in the chosen languages, and the viewer would rather have any language
   // than none: the title's most subtitled ones, most first. An unfiltered bundle
-  // already holds every language, so only a filtered lookup costs more requests.
-  if (ranked.length === 0 && config.fallback === 'any' && config.languages.length > 0) {
+  // already holds every language, so only a filtered lookup costs more requests. A
+  // partial answer does not show the chosen languages have nothing, so it never
+  // falls back.
+  if (ranked.length === 0 && !partial && config.fallback === 'any' && config.languages.length > 0) {
     const common = mostSubtitled(result.bundle);
-    const any = result.filtered ? await lookupAll({ ...args, languages: common }, api) : result;
-    if (any) ranked = pick(bundleItems(any.bundle), common);
+    let any: LookupResult | null = result;
+    if (result.filtered) {
+      try {
+        any = await lookupAll({ ...args, languages: common }, api);
+      } catch (err) {
+        return unavailable(err);
+      }
+    }
+    if (any) {
+      ranked = pick(bundleItems(any.bundle), common);
+      partial = any.partial === true;
+    }
   }
 
   const base = addonBase(env, url);
@@ -147,13 +178,13 @@ async function subtitles(
     SubEncoding: 'UTF-8',
   }));
 
-  const age = out.length > 0 ? CACHE.lookup : CACHE.empty;
+  const age = partial ? CACHE.failed : out.length > 0 ? CACHE.lookup : CACHE.empty;
   // Stremio's own cache directives, which the client honours as well as the HTTP
   // layer. Kept in step with the Cache-Control on the same response.
   return json({ subtitles: out, cacheMaxAge: age, staleRevalidate: age, staleError: 86400 }, age);
 }
 
-/** Converted bytes for one subtitle. Immutable, so a cache hit costs no subrequest. */
+/** Converted bytes for one subtitle. Immutable, so a cache hit never fetches them again. */
 async function bytes(env: Env, rawId: string, deps: Deps): Promise<Response> {
   const id = Number(rawId);
   if (!Number.isInteger(id) || id <= 0) return error(400, 'not a subtitle id');
@@ -164,8 +195,10 @@ async function bytes(env: Env, rawId: string, deps: Deps): Promise<Response> {
       base: env.API_BASE,
       key: env.SDB_API_KEY,
       fetch: deps.fetch,
+      timeoutMs: deps.timeoutMs,
     });
-  } catch {
+  } catch (err) {
+    console.warn(err instanceof Error ? err.message : String(err));
     return error(502, 'subtitle could not be fetched');
   }
 
@@ -189,6 +222,30 @@ async function bytes(env: Env, rawId: string, deps: Deps): Promise<Response> {
 /** What the routes need from the outside world. Injected so the tests need no network. */
 export interface Deps {
   fetch?: typeof fetch | undefined;
+  timeoutMs?: number | undefined;
+}
+
+/** The subtitle id in a `/s/:id.vtt` path, or null for any other path. */
+function bytesId(path: string): string | null {
+  return /^\/s\/(\d+)\.vtt$/.exec(path)?.[1] ?? null;
+}
+
+/**
+ * Tells the API about a subtitle served from this Worker's cache.
+ *
+ * Converted bytes are cached for a year, so after the first viewer of a subtitle the
+ * API's `/get` would never hear of it again, and its download log would count cache
+ * fills rather than plays. Only with a key: without one the addon shares the
+ * anonymous allowance, and a count must not spend what the next viewer's subtitle
+ * needs.
+ */
+export function countHit(req: Request, env: Env, deps: Deps = {}): Promise<void> | null {
+  if (req.method !== 'GET' || !env.SDB_API_KEY) return null;
+  const url = new URL(req.url);
+  const path = unprefix(addonBase(env, url), url.pathname);
+  const id = path === null ? null : bytesId(path);
+  if (id === null) return null;
+  return countDownload(Number(id), { base: env.API_BASE, key: env.SDB_API_KEY, fetch: deps.fetch });
 }
 
 /** Exported for the tests, which drive it with a plain Request and no Workers runtime. */
@@ -205,8 +262,8 @@ export async function route(req: Request, env: Env, deps: Deps = {}): Promise<Re
     return json({ ok: true, addon: manifest(base).id, api: env.API_BASE }, 60);
   }
 
-  const bytesMatch = /^\/s\/(\d+)\.vtt$/.exec(path);
-  if (bytesMatch) return bytes(env, bytesMatch[1] as string, deps);
+  const subtitleId = bytesId(path);
+  if (subtitleId !== null) return bytes(env, subtitleId, deps);
 
   if (/^(?:\/[^/]+)?\/manifest\.json$/.test(path)) {
     return json(manifest(base), CACHE.manifest);
@@ -239,7 +296,11 @@ export default {
     // request per viewer rather than one per half hour.
     const cache = edgeCache();
     const hit = await cache?.match(req);
-    if (hit) return hit;
+    if (hit) {
+      const count = countHit(req, env);
+      if (count) ctx.waitUntil(count);
+      return hit;
+    }
 
     const res = await route(req, env);
     if (cache && res.status === 200 && (req.method === 'GET' || req.method === 'HEAD')) {
