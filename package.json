@@ -20,10 +20,10 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.9",
-    "@cloudflare/workers-types": "^5.20260903.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "wrangler": "^4.42.0"
+    "@biomejs/biome": "^2.5.14",
+    "@cloudflare/workers-types": "^5.20260928.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2",
+    "wrangler": "^4.143.0"
   }
 }
