@@ -7,6 +7,7 @@
  * the IMDb id, which is the one identifier this addon needs.
  */
 
+import { ADDON_VERSION } from './manifest.js';
 import type { BundleSubtitle, LookupBundle } from './types.js';
 
 export interface LookupArgs {
@@ -47,8 +48,11 @@ export class ApiError extends Error {
   }
 }
 
+/** Names this addon and its version in the API's logs, on every request it sends. */
+export const USER_AGENT = `SubtitleDB-Stremio/${ADDON_VERSION} (+https://api.thesubtitledb.org/integrations/stremio)`;
+
 function headers(opts: ApiOptions): HeadersInit {
-  const h: Record<string, string> = { accept: 'application/json' };
+  const h: Record<string, string> = { accept: 'application/json', 'user-agent': USER_AGENT };
   if (opts.key) h.authorization = `Bearer ${opts.key}`;
   return h;
 }
@@ -231,11 +235,11 @@ function downloadUrl(id: number, base: string): URL {
   return url;
 }
 
-/** The key, sent to the API's own host and never to where it redirects. */
+/** The User-Agent on every hop; the key only to the API's own host, never where it redirects. */
 function auth(url: URL, opts: ApiOptions): Record<string, string> {
   return opts.key && url.host === new URL(opts.base).host
-    ? { authorization: `Bearer ${opts.key}` }
-    : {};
+    ? { 'user-agent': USER_AGENT, authorization: `Bearer ${opts.key}` }
+    : { 'user-agent': USER_AGENT };
 }
 
 /**
