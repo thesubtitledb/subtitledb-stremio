@@ -30,6 +30,19 @@ describe('content ids', () => {
     expect(parseContentId('tt0944947:x:1')).toBeNull();
     expect(parseContentId('')).toBeNull();
   });
+
+  it('refuses a tmdb: id, since the addon looks titles up by IMDb id only', () => {
+    expect(parseContentId('tmdb:1396')).toBeNull();
+    expect(parseContentId('tmdb:1396:1:1')).toBeNull();
+  });
+
+  it('refuses a season or episode the API would answer with a 400', () => {
+    for (const id of ['tt1::', 'tt1:1e3:1', 'tt1:0x1:1', 'tt1:1: 1', 'tt1:1.5:1', 'tt1:-1:1']) {
+      expect(parseContentId(id)).toBeNull();
+    }
+    // Number() reads this, but it prints as 1e+21 in the request path.
+    expect(parseContentId('tt1:1000000000000000000000:1')).toBeNull();
+  });
 });
 
 describe('extra arguments', () => {

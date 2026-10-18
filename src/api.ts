@@ -67,6 +67,15 @@ export function lookupPath(args: LookupArgs): string {
   return `/v1/by-imdb/${args.imdb}${drill}`;
 }
 
+/**
+ * A whole number from 1 to 100. The API answers 400 to 0 or a non-number and clamps
+ * anything over 100, so the request carries the number the API will use.
+ */
+export function clampLimit(limit: number): number {
+  const n = Math.trunc(limit);
+  return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1;
+}
+
 /** The result of a lookup, plus whether the API's language filter actually applied. */
 export interface LookupResult {
   bundle: LookupBundle;
@@ -87,7 +96,7 @@ export interface LookupResult {
  */
 export async function lookup(args: LookupArgs, opts: ApiOptions): Promise<LookupResult | null> {
   const url = new URL(lookupPath(args), opts.base);
-  url.searchParams.set('limit', String(args.limit));
+  url.searchParams.set('limit', String(clampLimit(args.limit)));
   if (args.languages.length > 0) url.searchParams.set('lang', args.languages.join(','));
   // Attributable in the API's logs without costing a CORS preflight.
   url.searchParams.set('client', 'stremio');

@@ -77,6 +77,34 @@ describe('asking for more than one language', () => {
     for (const call of stub.calls) expect(call.url).toContain('limit=1');
   });
 
+  it('never sends a limit the API answers with a 400', async () => {
+    // 0 and non-numbers are a 400; over 100 is clamped by the API, so it is clamped here.
+    for (const [limit, sent] of [
+      [0, 'limit=1'],
+      [-5, 'limit=1'],
+      [Number.NaN, 'limit=1'],
+      [2.7, 'limit=2'],
+      [500, 'limit=100'],
+    ] as const) {
+      const stub = stubFetch(byLang({ en: 1 }));
+      await lookupAll({ imdb: 'tt0133093', languages: ['en'], limit }, OPTS(stub.fetch));
+      expect(stub.calls[0]?.url).toMatch(new RegExp(`${sent}(?:&|$)`));
+    }
+  });
+
+  it('sends https, plain digits for the drill, and no sort or format', async () => {
+    const stub = stubFetch(byLang({ en: 1 }));
+    await lookupAll(
+      { imdb: 'tt0944947', season: 0, episode: 2, languages: ['en'], limit: 50 },
+      OPTS(stub.fetch),
+    );
+    const url = new URL(stub.calls[0]?.url ?? '');
+    expect(url.protocol).toBe('https:');
+    expect(url.pathname).toBe('/v1/by-imdb/tt0944947/season/0/episode/2');
+    expect(url.searchParams.has('sort')).toBe(false);
+    expect(url.searchParams.has('format')).toBe(false);
+  });
+
   it('counts a file once when two languages return the same id', async () => {
     const shared = row({ id: 99, language: 'fr' });
     const stub = stubFetch([
