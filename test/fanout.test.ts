@@ -13,8 +13,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { lookupAll } from '../src/api.js';
+import pkg from '../package.json';
+import { fetchSubtitle, lookupAll, USER_AGENT } from '../src/api.js';
 import { DEFAULT_CONFIG, encodeConfig } from '../src/config.js';
+import { ADDON_VERSION, manifest } from '../src/manifest.js';
 import { route } from '../src/worker.js';
 import { bundle, ENV, row, stubFetch } from './fixtures.js';
 
@@ -75,6 +77,50 @@ describe('asking for more than one language', () => {
     const stub = stubFetch(byLang(Object.fromEntries(many.map((l) => [l, 1]))));
     await lookupAll({ imdb: 'tt0133093', languages: many, limit: 5 }, OPTS(stub.fetch));
     for (const call of stub.calls) expect(call.url).toContain('limit=1');
+  });
+
+  it('never sends a limit the API answers with a 400', async () => {
+    // 0 and non-numbers are a 400; over 100 is clamped by the API, so it is clamped here.
+    for (const [limit, sent] of [
+      [0, 'limit=1'],
+      [-5, 'limit=1'],
+      [Number.NaN, 'limit=1'],
+      [2.7, 'limit=2'],
+      [500, 'limit=100'],
+    ] as const) {
+      const stub = stubFetch(byLang({ en: 1 }));
+      await lookupAll({ imdb: 'tt0133093', languages: ['en'], limit }, OPTS(stub.fetch));
+      expect(stub.calls[0]?.url).toMatch(new RegExp(`${sent}(?:&|$)`));
+    }
+  });
+
+  it('sends https, plain digits for the drill, and no sort or format', async () => {
+    const stub = stubFetch(byLang({ en: 1 }));
+    await lookupAll(
+      { imdb: 'tt0944947', season: 0, episode: 2, languages: ['en'], limit: 50 },
+      OPTS(stub.fetch),
+    );
+    const url = new URL(stub.calls[0]?.url ?? '');
+    expect(url.protocol).toBe('https:');
+    expect(url.pathname).toBe('/v1/by-imdb/tt0944947/season/0/episode/2');
+    expect(url.searchParams.has('sort')).toBe(false);
+    expect(url.searchParams.has('format')).toBe(false);
+  });
+
+  it('names the addon and its version in the User-Agent, the same version everywhere', async () => {
+    const stub = stubFetch(byLang({ en: 1 }));
+    await lookupAll({ imdb: 'tt0133093', languages: ['en'], limit: 50 }, OPTS(stub.fetch));
+    const sent = new Headers(stub.calls[0]?.init?.headers).get('user-agent');
+    expect(sent).toBe(USER_AGENT);
+    expect(sent).toMatch(new RegExp(`^SubtitleDB-Stremio/${pkg.version.replace(/\./g, '\\.')} `));
+    expect(ADDON_VERSION).toBe(pkg.version);
+    expect(manifest('https://stremio.example.test').version).toBe(pkg.version);
+
+    const files = stubFetch([
+      { match: /\/get\/7/, text: '1\n00:00:01,000 --> 00:00:02,000\nHi\n' },
+    ]);
+    await fetchSubtitle(7, OPTS(files.fetch));
+    expect(new Headers(files.calls[0]?.init?.headers).get('user-agent')).toBe(USER_AGENT);
   });
 
   it('counts a file once when two languages return the same id', async () => {

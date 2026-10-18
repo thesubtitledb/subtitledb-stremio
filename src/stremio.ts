@@ -27,11 +27,12 @@ export function parseContentId(raw: string): ContentId | null {
   if (!/^tt\d{1,10}$/.test(head)) return null;
   if (parts.length === 1) return { imdb: head };
   if (parts.length !== 3) return null;
-  const season = Number(parts[1]);
-  const episode = Number(parts[2]);
-  if (!Number.isInteger(season) || !Number.isInteger(episode)) return null;
-  if (season < 0 || episode < 0) return null;
-  return { imdb: head, season, episode };
+  // Plain digits only. Number() also reads '', '1e3' and '0x1', and prints a value past
+  // 1e21 as '1e+21', which the API answers with a 400 as a non-numeric season.
+  const season = parts[1] ?? '';
+  const episode = parts[2] ?? '';
+  if (!/^\d{1,9}$/.test(season) || !/^\d{1,9}$/.test(episode)) return null;
+  return { imdb: head, season: Number(season), episode: Number(episode) };
 }
 
 /**

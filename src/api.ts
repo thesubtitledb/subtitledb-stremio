@@ -7,6 +7,7 @@
  * the IMDb id, which is the one identifier this addon needs.
  */
 
+import { ADDON_VERSION } from './manifest.js';
 import type { BundleSubtitle, LookupBundle } from './types.js';
 
 export interface LookupArgs {
@@ -47,8 +48,11 @@ export class ApiError extends Error {
   }
 }
 
+/** Names this addon and its version in the API's logs, on every request it sends. */
+export const USER_AGENT = `SubtitleDB-Stremio/${ADDON_VERSION} (+https://api.thesubtitledb.org/integrations/stremio)`;
+
 function headers(opts: ApiOptions): HeadersInit {
-  const h: Record<string, string> = { accept: 'application/json' };
+  const h: Record<string, string> = { accept: 'application/json', 'user-agent': USER_AGENT };
   if (opts.key) h.authorization = `Bearer ${opts.key}`;
   return h;
 }
@@ -65,6 +69,15 @@ export function lookupPath(args: LookupArgs): string {
       ? `/season/${args.season}/episode/${args.episode}`
       : '';
   return `/v1/by-imdb/${args.imdb}${drill}`;
+}
+
+/**
+ * A whole number from 1 to 100. The API answers 400 to 0 or a non-number and clamps
+ * anything over 100, so the request carries the number the API will use.
+ */
+export function clampLimit(limit: number): number {
+  const n = Math.trunc(limit);
+  return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1;
 }
 
 /** The result of a lookup, plus whether the API's language filter actually applied. */
@@ -87,7 +100,7 @@ export interface LookupResult {
  */
 export async function lookup(args: LookupArgs, opts: ApiOptions): Promise<LookupResult | null> {
   const url = new URL(lookupPath(args), opts.base);
-  url.searchParams.set('limit', String(args.limit));
+  url.searchParams.set('limit', String(clampLimit(args.limit)));
   if (args.languages.length > 0) url.searchParams.set('lang', args.languages.join(','));
   // Attributable in the API's logs without costing a CORS preflight.
   url.searchParams.set('client', 'stremio');
@@ -222,11 +235,11 @@ function downloadUrl(id: number, base: string): URL {
   return url;
 }
 
-/** The key, sent to the API's own host and never to where it redirects. */
+/** The User-Agent on every hop; the key only to the API's own host, never where it redirects. */
 function auth(url: URL, opts: ApiOptions): Record<string, string> {
   return opts.key && url.host === new URL(opts.base).host
-    ? { authorization: `Bearer ${opts.key}` }
-    : {};
+    ? { 'user-agent': USER_AGENT, authorization: `Bearer ${opts.key}` }
+    : { 'user-agent': USER_AGENT };
 }
 
 /**
