@@ -79,6 +79,6 @@ export interface Env {
    * treats it as one drops the prefix off every URL it builds.
    */
   ADDON_BASE: string;
-  /** Optional. Moves the addon off the anonymous rate-limit tier when set. */
+  /** Optional. Sent as a Bearer header; the routes this addon calls need none. */
   SDB_API_KEY?: string;
 }

@@ -21,7 +21,7 @@ export interface LookupArgs {
 
 export interface ApiOptions {
   base: string;
-  /** Moves the addon off the anonymous rate-limit tier. Optional by design. */
+  /** Sent as a Bearer header when set. The routes this addon calls need none. */
   key?: string | undefined;
   fetch?: typeof fetch | undefined;
   /** How long one request may take. TIMEOUT_MS unless a test needs it shorter. */

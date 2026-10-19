@@ -8,8 +8,7 @@ export default defineConfig({
     include: ['test/**/*.live.test.ts'],
     testTimeout: 30000,
     hookTimeout: 30000,
-    // Serial, because the anonymous tier is rate limited per IP and a parallel suite
-    // spends that budget on itself.
+    // Serial, to keep the load this suite puts on the live API low.
     fileParallelism: false,
   },
 });

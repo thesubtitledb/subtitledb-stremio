@@ -8,8 +8,7 @@
  * The fourth route is this addon's own. Stremio renders SubRip and WebVTT; the corpus
  * is mostly SubRip with a long tail of SubStation Alpha, and /get serves what is
  * stored. So subtitle URLs point back here, at /s/:id.vtt, and the bytes are converted
- * on the way through. That also puts every subtitle behind this Worker's cache rather
- * than behind the API's rate limiter.
+ * on the way through. That also puts every subtitle behind this Worker's cache.
  */
 
 import { bundleItems, fetchSubtitle, type LookupResult, lookupAll } from './api.js';
@@ -273,9 +272,9 @@ function edgeCache(): Cache | undefined {
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // The Cache API is what keeps this addon off the API's anonymous rate limit: one
-    // Worker serves every viewer, so without it a popular title costs one upstream
-    // request per viewer rather than one per half hour.
+    // The Cache API keeps upstream traffic down: one Worker serves every viewer, so
+    // without it a popular title costs one upstream request per viewer rather than one
+    // per half hour.
     const cache = edgeCache();
     const hit = await cache?.match(req);
     if (hit) return hit;
