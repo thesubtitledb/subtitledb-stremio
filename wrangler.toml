@@ -25,9 +25,9 @@ API_BASE = "https://api.thesubtitledb.org"
 # one place the mount point is written down.
 ADDON_BASE = "https://api.thesubtitledb.org/integrations/stremio"
 
-# SDB_API_KEY is a secret, not a var: it moves the addon from the anonymous rate-limit
-# tier to the key tier. Set with `wrangler secret put SDB_API_KEY`. The addon works
-# without it, which is why nothing here declares it required.
+# SDB_API_KEY is a secret, not a var, sent as a Bearer header when set. Set with
+# `wrangler secret put SDB_API_KEY`. The routes the addon calls need no key, which is
+# why nothing here declares it required.
 
 [[routes]]
 pattern = "api.thesubtitledb.org/integrations/stremio/*"

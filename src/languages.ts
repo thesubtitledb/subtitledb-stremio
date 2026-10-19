@@ -52,6 +52,60 @@ const ALIASES: Record<string, string> = {
   nno: 'no',
 };
 
+// Spanish regions the API files under ea, as upstream corpusLanguage. 419 is Latin America.
+for (const r of [
+  '419',
+  'ar',
+  'bo',
+  'cl',
+  'co',
+  'cr',
+  'cu',
+  'do',
+  'ec',
+  'gt',
+  'hn',
+  'mx',
+  'ni',
+  'pa',
+  'pe',
+  'pr',
+  'py',
+  'sv',
+  'us',
+  'uy',
+  've',
+]) {
+  ALIASES[`es-${r}`] = 'ea';
+}
+
+/** Spanish regions the API files under ea, as upstream corpusLanguage. 419 is Latin America. */
+for (const r of [
+  '419',
+  'ar',
+  'bo',
+  'cl',
+  'co',
+  'cr',
+  'cu',
+  'do',
+  'ec',
+  'gt',
+  'hn',
+  'mx',
+  'ni',
+  'pa',
+  'pe',
+  'pr',
+  'py',
+  'sv',
+  'us',
+  'uy',
+  've',
+]) {
+  ALIASES[`es-${r}`] = 'ea';
+}
+
 /**
  * ISO 639-2 to the corpus code, both the bibliographic and terminological forms.
  *
@@ -193,7 +247,7 @@ function namedCodes(): string[] {
     const two = ALPHA3[three] as string;
     if (!out.includes(two) && hasLanguageName(two)) out.push(two);
   }
-  for (const two of ['pb', 'pm', 'ze', 'zt']) {
+  for (const two of ['pb', 'pm', 'ze', 'zt', 'ea', 'sp']) {
     if (hasLanguageName(two)) out.push(two);
   }
   return out;

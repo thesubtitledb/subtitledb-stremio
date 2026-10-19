@@ -21,8 +21,8 @@ describe('what goes in a subtitle lang field', () => {
     // Stremio displays the raw string when it does not recognise it, so a name is
     // read by the viewer and a three-letter guess is not.
     expect(toStremioLang('pb')).toBe('Portuguese (Brazil)');
-    expect(toStremioLang('zt')).toBe('Chinese (traditional)');
-    expect(toStremioLang('ze')).toBe('Chinese (bilingual)');
+    expect(toStremioLang('zt')).toBe('Chinese (Traditional)');
+    expect(toStremioLang('ze')).toBe('Chinese and English');
     expect(toStremioLang('pm')).toBe('Portuguese (Mozambique)');
   });
 
