@@ -8,6 +8,13 @@ describe('what goes in a subtitle lang field', () => {
     expect(toStremioLang('ja')).toBe('jpn');
   });
 
+  it('is three letters for every ISO 639-1 code, not only the ones the resolver names', () => {
+    expect(toStremioLang('be')).toBe('bel');
+    expect(toStremioLang('ka')).toBe('geo');
+    expect(toStremioLang('at')).toBe('ast');
+    expect(toStremioLang('ma')).toBe('mni');
+  });
+
   it('is the bibliographic form, which is what other subtitle addons send', () => {
     // Sending fra where everyone else sends fre puts our French in its own group in
     // a client that groups by string.

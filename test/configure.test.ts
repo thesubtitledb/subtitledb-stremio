@@ -117,7 +117,7 @@ describe('picking languages', () => {
   });
 
   it('offers a code with no name where it was searched for, not in a second box', () => {
-    // Only 68 of the corpus's 185 codes have a name to browse for, so searching one of
+    // Only 68 of the corpus's codes have a name to browse for, so searching one of
     // the other 117 finds nothing. That is not a dead end and the page should not send
     // the viewer somewhere else to type it again.
     const html = page();
