@@ -47,8 +47,7 @@ export function manifest(origin: string): Manifest {
     id: ADDON_ID,
     version: ADDON_VERSION,
     name: 'TheSubtitleDB',
-    description:
-      'Subtitles from TheSubtitleDB, a corpus of over ten million files in 185 languages.',
+    description: 'Subtitles from TheSubtitleDB, a corpus of over ten million files.',
     logo: `${origin}/logo.png`,
     types: ['movie', 'series'],
     resources: ['subtitles'],
@@ -449,7 +448,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
 -->
 <main>
   <h1>TheSubtitleDB</h1>
-  <p class="lede">Subtitles for Stremio, from a corpus of over ten million files in 185 languages.</p>
+  <p class="lede">Subtitles for Stremio, from a corpus of over ten million files.</p>
 
   <section class="panel" aria-labelledby="lh">
     <div class="ph">
@@ -545,7 +544,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
   var fresh = null;
 
   /* The same rules as src/languages.ts toCode, against the same table. An unknown
-     two-letter code passes through on purpose: the corpus carries 185 codes and the
+     two-letter code passes through on purpose: the corpus carries more codes than the
      name table covers far fewer, so refusing them would hide subtitles that exist. */
   function toCode(raw) {
     var v = String(raw).trim().toLowerCase().replace(/_/g, '-').replace(/\\s+/g, ' ');
@@ -710,7 +709,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
       box.appendChild(b);
     }
 
-    /* Only ${count} of the corpus's 185 codes have a name to browse for, so a search
+    /* Only ${count} of the corpus's codes have a name to browse for, so a search
        that finds nothing is not always a dead end: if it resolves to a code, offer it
        here rather than sending the viewer somewhere else to type it again. */
     none.hidden = !q || list.length > 0;

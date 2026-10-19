@@ -66,12 +66,16 @@ describe('config in the URL', () => {
     expect(decodeConfig(segment)).toEqual({ ...DEFAULT_CONFIG, languages: ['de'] });
   });
 
-  it('drops anything that is not a two-letter code, and caps the list at 16', () => {
+  it('resolves each spelling to a corpus code, drops what does not resolve, caps at 16', () => {
     const languages = ['en', 'FR', 'x', '', 'de'];
     const decoded = decodeConfig(
       encodeConfig({ ...DEFAULT_CONFIG, languages: languages as string[] }),
     );
-    expect(decoded.languages).toEqual(['en', 'de']);
+    expect(decoded.languages).toEqual(['en', 'fr', 'de']);
+
+    // pt-BR used to be dropped, which left no filter: every language, Arabic first.
+    const tags = ['pt-BR', 'es-419', 'zh-Hant', 'eng', 'Portuguese (Brazil)'];
+    expect(decodeConfig(b64url({ l: tags })).languages).toEqual(['pb', 'ea', 'zt', 'en']);
 
     // 16 is the API's own ceiling on a comma separated lang list.
     const many = Array.from({ length: 30 }, (_, i) => `a${String.fromCharCode(97 + (i % 26))}`);

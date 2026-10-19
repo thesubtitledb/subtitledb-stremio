@@ -13,6 +13,8 @@
  * nothing and gives the viewer no way to tell why.
  */
 
+import { toCode } from './languages.js';
+
 /** How a hearing-impaired subtitle is treated. */
 export type HearingImpaired = 'include' | 'exclude' | 'prefer';
 
@@ -99,8 +101,16 @@ export function decodeConfig(segment: string | null | undefined): AddonConfig {
   if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_CONFIG };
   const raw = parsed as Record<string, unknown>;
 
+  // Any spelling the configure page takes: pt-BR, es-419, eng, Portuguese. Dropped
+  // rather than resolved, pt-BR left no filter and the install got every language.
   const languages = Array.isArray(raw.l)
-    ? raw.l.filter((x): x is string => typeof x === 'string' && /^[a-z]{2}$/.test(x)).slice(0, 16)
+    ? [
+        ...new Set(
+          raw.l
+            .map((x) => (typeof x === 'string' ? toCode(x) : null))
+            .filter((x): x is string => x !== null && /^[a-z]{2}$/.test(x)),
+        ),
+      ].slice(0, 16)
     : DEFAULT_CONFIG.languages;
 
   const limitRaw = typeof raw.n === 'number' ? Math.trunc(raw.n) : DEFAULT_CONFIG.limit;

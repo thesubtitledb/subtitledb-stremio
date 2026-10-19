@@ -197,6 +197,17 @@ const ALPHA3: Record<string, string> = {
   yid: 'yi',
 };
 
+/**
+ * Every ISO 639-1 code to its ISO 639-2/B form, plus the two OpenSubtitles codes that
+ * have one (at Asturian, ma Manipuri). The fallback behind TO_ALPHA3, so a corpus code
+ * outside the resolver's table (be, ka, ...) still reaches Stremio as three letters.
+ */
+const ISO_639_2B: Record<string, string> = Object.fromEntries(
+  'aa:aar ab:abk ae:ave af:afr ak:aka am:amh an:arg ar:ara as:asm av:ava ay:aym az:aze ba:bak be:bel bg:bul bh:bih bi:bis bm:bam bn:ben bo:tib br:bre bs:bos ca:cat ce:che ch:cha co:cos cr:cre cs:cze cu:chu cv:chv cy:wel da:dan de:ger dv:div dz:dzo ee:ewe el:gre en:eng eo:epo es:spa et:est eu:baq fa:per ff:ful fi:fin fj:fij fo:fao fr:fre fy:fry ga:gle gd:gla gl:glg gn:grn gu:guj gv:glv ha:hau he:heb hi:hin ho:hmo hr:hrv ht:hat hu:hun hy:arm hz:her ia:ina id:ind ie:ile ig:ibo ii:iii ik:ipk io:ido is:ice it:ita iu:iku ja:jpn jv:jav ka:geo kg:kon ki:kik kj:kua kk:kaz kl:kal km:khm kn:kan ko:kor kr:kau ks:kas ku:kur kv:kom kw:cor ky:kir la:lat lb:ltz lg:lug li:lim ln:lin lo:lao lt:lit lu:lub lv:lav mg:mlg mh:mah mi:mao mk:mac ml:mal mn:mon mr:mar ms:may mt:mlt my:bur na:nau nb:nob nd:nde ne:nep ng:ndo nl:dut nn:nno no:nor nr:nbl nv:nav ny:nya oc:oci oj:oji om:orm or:ori os:oss pa:pan pi:pli pl:pol ps:pus pt:por qu:que rm:roh rn:run ro:rum ru:rus rw:kin sa:san sc:srd sd:snd se:sme sg:sag si:sin sk:slo sl:slv sm:smo sn:sna so:som sq:alb sr:srp ss:ssw st:sot su:sun sv:swe sw:swa ta:tam te:tel tg:tgk th:tha ti:tir tk:tuk tl:tgl tn:tsn to:ton tr:tur ts:tso tt:tat tw:twi ty:tah ug:uig uk:ukr ur:urd uz:uzb ve:ven vi:vie vo:vol wa:wln wo:wol xh:xho yi:yid yo:yor za:zha zh:chi zu:zul at:ast ma:mni'
+    .split(' ')
+    .map((p) => p.split(':') as [string, string]),
+);
+
 /** The corpus code to the ISO 639-2/B form Stremio asks for. Built from ALPHA3. */
 const TO_ALPHA3: Record<string, string> = (() => {
   // ISO 639-2 has two forms for nineteen languages and Stremio takes either. The
@@ -288,7 +299,7 @@ function tidy(value: string): string {
  * Resolve any spelling of a language to the code the API filters on.
  *
  * Null for an empty value. An unknown two-letter code passes through rather than
- * being guessed at: the corpus carries 185 codes and the name table covers 68, so
+ * being guessed at: the corpus carries far more codes than the name table covers, so
  * dropping the rest would hide subtitles that exist.
  */
 export function toCode(value: string | null | undefined): string | null {
@@ -339,7 +350,7 @@ export function toCodes(value: string | null | undefined): string[] {
  */
 export function toStremioLang(code: string): string {
   const key = code.trim().toLowerCase();
-  const three = TO_ALPHA3[key];
+  const three = TO_ALPHA3[key] ?? ISO_639_2B[key];
   if (three) return three;
   return hasLanguageName(key) ? languageName(key) : key;
 }
