@@ -18,8 +18,10 @@
 const NAMES: Record<string, string> = {
   // OpenSubtitles-specific codes, not ISO639.
   pb: 'Portuguese (Brazil)',
-  ze: 'Chinese (bilingual)',
-  zt: 'Chinese (traditional)',
+  ze: 'Chinese and English',
+  zt: 'Chinese (Traditional)',
+  ea: 'Spanish (Latin America)',
+  sp: 'Spanish (Spain)',
   pm: 'Portuguese (Mozambique)',
 
   ar: 'Arabic',
